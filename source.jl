@@ -1,6 +1,7 @@
 using Statistics
 using Knet: Knet, dir, zeroone, progress, sgd, load, save, gc, progress!, Param,
- KnetArray, gpu, Data, nll, relu, training, dropout, minibatch, param, param0
+ KnetArray, gpu, Data, nll, relu, training, dropout, minibatch, param, param0,
+ accuracy
 using AutoGrad
 using Base.Iterators
 using Plots; default(fmt=:png,ls=:auto)
@@ -18,7 +19,7 @@ Saves results to a file and can load them back. Returns the results.
 """
 function train_results(file,model,epochs=100,from_scratch=true; o...)
     if (from_scratch)
-        r = ((model(dtrn), model(dtst), zeroone(model,dtrn), zeroone(model,dtst))
+        r = ((model(dtrn), model(dtst), accuracy(model,dtrn), accuracy(model,dtst))
              for x in take_every(length(dtrn), progress(sgd(model,repeat(dtrn,epochs)))))
         r = reshape(collect(Float32,flatten(r)),(4,:))
         Knet.save(file, "results", r, "model", clean(model))
@@ -94,13 +95,26 @@ mlp_model = create_mlp_model(32*32*3, 10, 16, 16)
 
 mlp_results, mlp_model = train_results("mlp.jld2", mlp_model, 5, false)
 plot([mlp_results[1,:], mlp_results[2,:]], labels=[:trnMLP :tstMLP], xlabel="Epochs", ylabel="Loss")
+plot([mlp_results[3,:], mlp_results[4,:]], labels=[:trnMLP :tstMLP], xlabel="Epochs", ylabel="Accuracy")
 
-mlp_wider = random_pad_mlp(mlp_model, 1, 20)
+# MLP wider is randomly padded
+mlp_wider = random_pad_mlp(mlp_model, 1, 32)
+# MLP deeper is completely randomly initialized
+mlp_deeper = create_mlp_model(32*32*3, 10, 16, 16, 16)
 
-@show mlp_model(dtrn)
-@show mlp_model(dtrn)
-@show mlp_wider(dtrn)
-@show mlp_wider(dtst)
+println("MLP train loss: ", mlp_model(dtrn))
+println("MLP test loss: ", mlp_model(dtst))
+println("MLP wider train loss: ", mlp_wider(dtrn))
+println("MLP wider test loss: ", mlp_wider(dtst))
+println("MLP deeper train loss: ", mlp_deeper(dtrn))
+println("MLP deeper test loss: ", mlp_deeper(dtst))
+
+println("MLP train accuracy: ", accuracy(mlp_model,dtrn))
+println("MLP test accuracy: ", accuracy(mlp_model,dtst))
+println("MLP wider train accuracy: ", accuracy(mlp_wider,dtrn))
+println("MLP wider test accuracy: ", accuracy(mlp_wider,dtst))
+println("MLP deeper train accuracy: ", accuracy(mlp_deeper,dtrn))
+println("MLP deeper test accuracy: ", accuracy(mlp_deeper,dtst))
 
 # mlp1 = create_mlp_model(2, 3, 2)
 # mlp2 = random_pad_mlp(mlp1, 1, 3)
