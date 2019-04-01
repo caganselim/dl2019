@@ -1,6 +1,7 @@
 using Statistics
 using Knet: Knet, dir, zeroone, progress, sgd, load, save, gc, progress!, Param,
- KnetArray, gpu, Data, nll, relu, training, dropout, minibatch, param, param0
+ KnetArray, gpu, Data, nll, relu, training, dropout, minibatch, param, param0,
+ conv4, pool, mat, zeroone, sgd, adam, rmsprop, adagrad, sigm, softmax, tanh
 using AutoGrad
 using Base.Iterators
 using Plots; default(fmt=:png,ls=:auto)
@@ -84,23 +85,27 @@ end
 @show size(ytst)
 
 # Need to reshape it to 2 dims for MLP
-xtrn = reshape(xtrn, (32*32*3, :))
-xtst = reshape(xtst, (32*32*3, :))
+# xtrn = reshape(xtrn, (32*32*3, :))
+# xtst = reshape(xtst, (32*32*3, :))
 
 dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
 dtst = minibatch(xtst, ytst, 50, xtype=atype())
 
-mlp_model = create_mlp_model(32*32*3, 10, 16, 16)
+# mlp_model = create_mlp_model(32*32*3, 10, 16, 16)
+#
+# mlp_results, mlp_model = train_results("mlp.jld2", mlp_model, 5, false)
+# plot([mlp_results[1,:], mlp_results[2,:]], labels=[:trnMLP :tstMLP], xlabel="Epochs", ylabel="Loss")
+#
+# mlp_wider = random_pad_mlp(mlp_model, 1, 20)
+#
+# @show mlp_model(dtrn)
+# @show mlp_model(dtrn)
+# @show mlp_wider(dtrn)
+# @show mlp_wider(dtst)
 
-mlp_results, mlp_model = train_results("mlp.jld2", mlp_model, 5, false)
-plot([mlp_results[1,:], mlp_results[2,:]], labels=[:trnMLP :tstMLP], xlabel="Epochs", ylabel="Loss")
-
-mlp_wider = random_pad_mlp(mlp_model, 1, 20)
-
-@show mlp_model(dtrn)
-@show mlp_model(dtrn)
-@show mlp_wider(dtrn)
-@show mlp_wider(dtst)
+inception_cifar = create_inception_bn_small_model(3, 10)
+inc_results, inc_model = train_results("inception.jld2", inception_cifar, 5, true)
+plot([inc_results[1,:], inc_results[2,:]], labels=[:trnINC :tstINC], xlabel="Epochs", ylabel="Loss")
 
 # mlp1 = create_mlp_model(2, 3, 2)
 # mlp2 = random_pad_mlp(mlp1, 1, 3)
