@@ -1,7 +1,8 @@
 using Statistics
 using Knet: Knet, dir, zeroone, progress, sgd, load, save, gc, progress!, Param,
  KnetArray, gpu, Data, nll, relu, training, dropout, minibatch, param, param0,
- conv4, pool, mat, zeroone, sgd, adam, rmsprop, adagrad, sigm, softmax, tanh
+ conv4, pool, mat, zeroone, sgd, adam, rmsprop, adagrad, sigm, softmax, tanh,
+ batchnorm, bnparams, bnmoments
 using AutoGrad
 using Base.Iterators
 using Plots; default(fmt=:png,ls=:auto)
@@ -22,7 +23,7 @@ function train_results(file,model,epochs=100,from_scratch=true; o...)
         r = ((model(dtrn), model(dtst), zeroone(model,dtrn), zeroone(model,dtst))
              for x in take_every(length(dtrn), progress(sgd(model,repeat(dtrn,epochs)))))
         r = reshape(collect(Float32,flatten(r)),(4,:))
-        Knet.save(file, "results", r, "model", clean(model))
+        Knet.save(file, "results", r, "model", model)
         Knet.gc() # To save gpu memory
     else
         r, model = Knet.load(file, "results", "model")
@@ -75,7 +76,7 @@ end
 # The global device setting (to reduce gpu() calls)
 let at = nothing
     global atype
-    atype() = (at == nothing) ? (at = (gpu() >= 0 ? KnetArray : Array)) : at
+    atype() = (at == nothing) ? (at = (gpu() >= 0 ? KnetArray{Float32} : Array{Float32})) : at
 end
 
 (xtrn, ytrn), (xtst, ytst) = load_data()
@@ -88,9 +89,8 @@ end
 # xtrn = reshape(xtrn, (32*32*3, :))
 # xtst = reshape(xtst, (32*32*3, :))
 
-dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
-dtst = minibatch(xtst, ytst, 50, xtype=atype())
-
+dtrn = minibatch(xtrn, ytrn, 20, xtype=atype())
+dtst = minibatch(xtst, ytst, 25, xtype=atype())
 # mlp_model = create_mlp_model(32*32*3, 10, 16, 16)
 #
 # mlp_results, mlp_model = train_results("mlp.jld2", mlp_model, 5, false)
@@ -103,8 +103,8 @@ dtst = minibatch(xtst, ytst, 50, xtype=atype())
 # @show mlp_wider(dtrn)
 # @show mlp_wider(dtst)
 
-inception_cifar = create_inception_bn_small_model(3, 10)
-inc_results, inc_model = train_results("inception.jld2", inception_cifar, 5, true)
+inception_cifar = create_inception_bn_smaller_model(3, 10)
+inc_results, inc_model = train_results("inception_smaller.jld2", inception_cifar, 3, true)
 plot([inc_results[1,:], inc_results[2,:]], labels=[:trnINC :tstINC], xlabel="Epochs", ylabel="Loss")
 
 # mlp1 = create_mlp_model(2, 3, 2)
