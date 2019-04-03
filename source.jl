@@ -6,6 +6,9 @@ using Knet: Knet, dir, zeroone, progress, sgd, load, save, gc, progress!, Param,
 using AutoGrad
 using Base.Iterators
 using Plots; default(fmt=:png,ls=:auto)
+using Profile
+using ProfileView
+
 
 include(Knet.dir("data", "cifar.jl"))
 
@@ -18,7 +21,7 @@ take_every(n,itr) = (x for (i,x) in enumerate(itr) if i % n == 1)
 Trains a model, tests it every epoch on training and testing data.
 Saves results to a file and can load them back. Returns the results.
 """
-function train_results(file,model,epochs=100,from_scratch=true; o...)
+function train_results(dtrn, dtst, file, model, epochs=100, from_scratch=true; o...)
     if (from_scratch)
         r = ((model(dtrn), model(dtst), zeroone(model,dtrn), zeroone(model,dtst))
              for x in take_every(length(dtrn), progress(sgd(model,repeat(dtrn,epochs)))))
@@ -79,42 +82,26 @@ let at = nothing
     atype() = (at == nothing) ? (at = (gpu() >= 0 ? KnetArray{Float32} : Array{Float32})) : at
 end
 
-(xtrn, ytrn), (xtst, ytst) = load_data()
-@show size(xtrn)
-@show size(ytrn)
-@show size(xtst)
-@show size(ytst)
+function main()
+    (xtrn, ytrn), (xtst, ytst) = load_data()
 
-# Need to reshape it to 2 dims for MLP
-# xtrn = reshape(xtrn, (32*32*3, :))
-# xtst = reshape(xtst, (32*32*3, :))
+    # Need to reshape it to 2 dims for MLP
+    # xtrn = reshape(xtrn, (32*32*3, :))
+    # xtst = reshape(xtst, (32*32*3, :))
 
-dtrn = minibatch(xtrn, ytrn, 20, xtype=atype())
-dtst = minibatch(xtst, ytst, 25, xtype=atype())
-# mlp_model = create_mlp_model(32*32*3, 10, 16, 16)
-#
-# mlp_results, mlp_model = train_results("mlp.jld2", mlp_model, 5, false)
-# plot([mlp_results[1,:], mlp_results[2,:]], labels=[:trnMLP :tstMLP], xlabel="Epochs", ylabel="Loss")
-#
-# mlp_wider = random_pad_mlp(mlp_model, 1, 20)
-#
-# @show mlp_model(dtrn)
-# @show mlp_model(dtrn)
-# @show mlp_wider(dtrn)
-# @show mlp_wider(dtst)
+    dtrn = minibatch(xtrn, ytrn, 20, xtype=atype())
+    dtst = minibatch(xtst, ytst, 25, xtype=atype())
+    # mlp_model = create_mlp_model(32*32*3, 10, 16, 16)
+    #
+    # mlp_results, mlp_model = train_results("mlp.jld2", mlp_model, 5, false)
+    # plot([mlp_results[1,:], mlp_results[2,:]], labels=[:trnMLP :tstMLP], xlabel="Epochs", ylabel="Loss")
+    #
+    # mlp_wider = random_pad_mlp(mlp_model, 1, 20)
 
-inception_cifar = create_inception_bn_smaller_model(3, 10)
-inc_results, inc_model = train_results("inception_smaller.jld2", inception_cifar, 3, true)
-plot([inc_results[1,:], inc_results[2,:]], labels=[:trnINC :tstINC], xlabel="Epochs", ylabel="Loss")
-
-# mlp1 = create_mlp_model(2, 3, 2)
-# mlp2 = random_pad_mlp(mlp1, 1, 3)
-#
-# println("MLP1")
-# for l in mlp1.layers
-#     @show l
-# end
-# println("MLP2")
-# for l in mlp2.layers
-#     @show l
-# end
+    inception_cifar = create_inception_bn_smaller_model(3, 10)
+    @profile inc_results, inc_model = train_results(dtrn, dtst, "inception_smaller.jld2", inception_cifar, 1, true)
+    plot([inc_results[1,:], inc_results[2,:]], labels=[:trnINC :tstINC], xlabel="Epochs", ylabel="Loss")
+end
+Profile.clear()
+main()
+ProfileView.view()
