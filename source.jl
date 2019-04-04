@@ -23,7 +23,7 @@ Saves results to a file and can load them back. Returns the results.
 """
 function train_results(dtrn, dtst, file, model, epochs=100, from_scratch=true; o...)
     if (from_scratch)
-        r = ((model(dtrn), model(dtst), zeroone(model,dtrn), zeroone(model,dtst))
+        r = ((model(dtrn), model(dtst), accuracy(model,dtrn), accuracy(model,dtst))
              for x in take_every(length(dtrn), progress(sgd(model,repeat(dtrn,epochs)))))
         r = reshape(collect(Float32,flatten(r)),(4,:))
         Knet.save(file, "results", r, "model", model)
@@ -71,6 +71,40 @@ function random_pad_mlp(model, changing_layer, new_unit_count)
     new_model = deepcopy(model)
     new_model.layers[changing_layer].w = Param(vcat(new_model.layers[changing_layer].w, padding_1))
     new_model.layers[changing_layer].b = Param(vcat(new_model.layers[changing_layer].b, padding_b))
+    new_model.layers[changing_layer+1].w = Param(hcat(new_model.layers[changing_layer+1].w, padding_2))
+
+    return new_model
+end
+
+function wider_mlp(model, changing_layer, new_unit_count)
+    old_unit_count = size(model.layers[changing_layer].w, 1)
+    if old_unit_count >= new_unit_count
+        println("New unit count must be greater than old unit count")
+        return nothing
+    end
+
+    new_model = deepcopy(model)
+    layer = new_model.layers[changing_layer]
+
+    # Initialize number of extra units, extra w array, random mapping, number of copies
+    extra_count = new_unit_count - old_unit_count
+    extra_w = Array{Float32}(undef, (extra_count, size(layer.w, 2)))
+    extra_mapping = rand(1:old_unit_count, extra_count)
+    copy_counts = ones(old_unit_count)
+    for i in 1:extra_count
+        copy_counts[extra_mapping[i]] += 1
+    end
+    # Divide weights that are copied more than once
+    layer.w ./= copy_counts
+
+    # Set the extra weights
+    for i in 1:extra_count
+        extra_w[i] = layer.w[extra_mapping[i]]
+    end
+
+
+    layer.w = Param(vcat(layer.w, extra_w))
+    layer.b = Param(vcat(layer.b, padding_b))
     new_model.layers[changing_layer+1].w = Param(hcat(new_model.layers[changing_layer+1].w, padding_2))
 
     return new_model
