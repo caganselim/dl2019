@@ -1,10 +1,14 @@
 using Statistics
 using Knet: Knet, dir, zeroone, progress, sgd, load, save, gc, progress!, Param,
  KnetArray, gpu, Data, nll, relu, training, dropout, minibatch, param, param0,
- accuracy
+ conv4, pool, mat, zeroone, sgd, adam, rmsprop, adagrad, sigm, softmax, tanh,
+ batchnorm, bnparams, bnmoments
 using AutoGrad
 using Base.Iterators
 using Plots; default(fmt=:png,ls=:auto)
+using Profile
+using ProfileView
+
 
 include(Knet.dir("data", "cifar.jl"))
 
@@ -17,12 +21,12 @@ take_every(n,itr) = (x for (i,x) in enumerate(itr) if i % n == 1)
 Trains a model, tests it every epoch on training and testing data.
 Saves results to a file and can load them back. Returns the results.
 """
-function train_results(file,model,epochs=100,from_scratch=true; o...)
+function train_results(dtrn, dtst, file, model, epochs=100, from_scratch=true; o...)
     if (from_scratch)
         r = ((model(dtrn), model(dtst), accuracy(model,dtrn), accuracy(model,dtst))
              for x in take_every(length(dtrn), progress(sgd(model,repeat(dtrn,epochs)))))
         r = reshape(collect(Float32,flatten(r)),(4,:))
-        Knet.save(file, "results", r, "model", clean(model))
+        Knet.save(file, "results", r, "model", model)
         Knet.gc() # To save gpu memory
     else
         r, model = Knet.load(file, "results", "model")
@@ -75,55 +79,29 @@ end
 # The global device setting (to reduce gpu() calls)
 let at = nothing
     global atype
-    atype() = (at == nothing) ? (at = (gpu() >= 0 ? KnetArray : Array)) : at
+    atype() = (at == nothing) ? (at = (gpu() >= 0 ? KnetArray{Float32} : Array{Float32})) : at
 end
 
-(xtrn, ytrn), (xtst, ytst) = load_data()
-@show size(xtrn)
-@show size(ytrn)
-@show size(xtst)
-@show size(ytst)
+function main()
+    (xtrn, ytrn), (xtst, ytst) = load_data()
 
-# Need to reshape it to 2 dims for MLP
-xtrn = reshape(xtrn, (32*32*3, :))
-xtst = reshape(xtst, (32*32*3, :))
+    # Need to reshape it to 2 dims for MLP
+    # xtrn = reshape(xtrn, (32*32*3, :))
+    # xtst = reshape(xtst, (32*32*3, :))
 
-dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
-dtst = minibatch(xtst, ytst, 50, xtype=atype())
+    dtrn = minibatch(xtrn, ytrn, 20, xtype=atype())
+    dtst = minibatch(xtst, ytst, 25, xtype=atype())
+    # mlp_model = create_mlp_model(32*32*3, 10, 16, 16)
+    #
+    # mlp_results, mlp_model = train_results("mlp.jld2", mlp_model, 5, false)
+    # plot([mlp_results[1,:], mlp_results[2,:]], labels=[:trnMLP :tstMLP], xlabel="Epochs", ylabel="Loss")
+    #
+    # mlp_wider = random_pad_mlp(mlp_model, 1, 20)
 
-mlp_model = create_mlp_model(32*32*3, 10, 16, 16)
-
-mlp_results, mlp_model = train_results("mlp.jld2", mlp_model, 5, false)
-plot([mlp_results[1,:], mlp_results[2,:]], labels=[:trnMLP :tstMLP], xlabel="Epochs", ylabel="Loss")
-plot([mlp_results[3,:], mlp_results[4,:]], labels=[:trnMLP :tstMLP], xlabel="Epochs", ylabel="Accuracy")
-
-# MLP wider is randomly padded
-mlp_wider = random_pad_mlp(mlp_model, 1, 32)
-# MLP deeper is completely randomly initialized
-mlp_deeper = create_mlp_model(32*32*3, 10, 16, 16, 16)
-
-println("MLP train loss: ", mlp_model(dtrn))
-println("MLP test loss: ", mlp_model(dtst))
-println("MLP wider train loss: ", mlp_wider(dtrn))
-println("MLP wider test loss: ", mlp_wider(dtst))
-println("MLP deeper train loss: ", mlp_deeper(dtrn))
-println("MLP deeper test loss: ", mlp_deeper(dtst))
-
-println("MLP train accuracy: ", accuracy(mlp_model,dtrn))
-println("MLP test accuracy: ", accuracy(mlp_model,dtst))
-println("MLP wider train accuracy: ", accuracy(mlp_wider,dtrn))
-println("MLP wider test accuracy: ", accuracy(mlp_wider,dtst))
-println("MLP deeper train accuracy: ", accuracy(mlp_deeper,dtrn))
-println("MLP deeper test accuracy: ", accuracy(mlp_deeper,dtst))
-
-# mlp1 = create_mlp_model(2, 3, 2)
-# mlp2 = random_pad_mlp(mlp1, 1, 3)
-#
-# println("MLP1")
-# for l in mlp1.layers
-#     @show l
-# end
-# println("MLP2")
-# for l in mlp2.layers
-#     @show l
-# end
+    inception_cifar = create_inception_bn_smaller_model(3, 10)
+    @profile inc_results, inc_model = train_results(dtrn, dtst, "inception_smaller.jld2", inception_cifar, 1, true)
+    plot([inc_results[1,:], inc_results[2,:]], labels=[:trnINC :tstINC], xlabel="Epochs", ylabel="Loss")
+end
+Profile.clear()
+main()
+ProfileView.view()
