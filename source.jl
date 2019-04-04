@@ -37,6 +37,7 @@ function train_results(dtrn, dtst, file, model, epochs=100, from_scratch=true, c
     else
         r, model = Knet.load(file, "results", "model")
         if cont_from_save
+            # todo: continue training doesn't work for some reason
             new_r = ((model(dtrn), model(dtst), accuracy(model, dtrn), accuracy(model, dtst))
                  for x in take_every(length(dtrn), progress(adam(model, repeat(dtrn,epochs)))))
             new_r = reshape(collect(Float32,flatten(r)),(4,:))

@@ -1,4 +1,4 @@
-
+# A chain of layers used to build models
 struct Chain
     layers
     Chain(layers...) = new(layers)
@@ -32,13 +32,6 @@ mutable struct ConvPool; w; b; f; p; end
 ConvPool(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;pdrop=0) = ConvPool(param(w1,w2,cx,cy), param0(1,1,cy,1), f, pdrop)
 
 # Convolutional layer
-# struct Conv; w; b; f; padding; stride; end
-# function (c::Conv)(x)
-#     c.f.(conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b)
-# end
-# function Conv(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;padding=0,stride=1)
-#     return Conv(param(w1,w2,cx,cy), param0(1,1,cy,1), f, padding, stride)
-# end
 struct Conv; w; b; f; padding; stride; bn_params; bn_moments; end
 function (c::Conv)(x)
     c.f.(conv4(c.w, batchnorm(x, c.bn_moments, c.bn_params), padding=c.padding, stride=c.stride) .+ c.b)
@@ -82,28 +75,6 @@ function InceptionA(cx, num_1, num_1_before_3, num_3, num_1_before_d3, num_d3, n
     return InceptionA(c1_alone, c1_before_3, c1_before_d3, c1_after_pool, c3, cd3_1, cd3_2, pool_mode)
 end
 
-# function (i::InceptionA)(x)
-#     num_1 = size(i.c1_alone.w, 4)
-#     num_3 = size(i.c3.w, 4)
-#     num_d3 = size(i.cd3_2.w, 4)
-#     num_ap = size(i.c1_after_pool.w, 4)
-#     dims = (Int(size(x, 1)/2), Int(size(x, 2)/2), num_1 + num_3 + num_d3 + num_ap, size(x, 4))
-#
-#     y = KnetArray{Float32}(undef, dims)
-#
-#     y[:, :, 1:num_1, :] = i.c1_alone(x)
-#     y[:, :, num_1+1:num_1+num_3, :] = i.c3(i.c1_before_3(x))
-#     y[:, :, num_1+num_3+1:num_1+num_3+num_d3, :] = i.cd3_2(i.cd3_1(i.c1_before_d3(x)))
-#     y[:, :, num_1+num_3+num_d3+1:num_1+num_3+num_d3+num_ap, :] = i.c1_after_pool(pool(x, window=3, stride=1, padding=1, mode=i.pool_mode))
-#     return y
-# end
-# function (i::InceptionA)(x)
-#     y1 = i.c1_alone(x)
-#     y2 = i.c3(i.c1_before_3(x))
-#     y3 = i.cd3_2(i.cd3_1(i.c1_before_d3(x)))
-#     y4 = i.c1_after_pool(pool(x, window=3, stride=1, padding=1, mode=i.pool_mode))
-#     return KnetArray(cat(Array(y1), Array(y2), Array(y3), Array(y4), dims=3))
-# end
 function (i::InceptionA)(x)
     y1 = i.c1_alone(x)
     y2 = i.c3(i.c1_before_3(x))
@@ -138,25 +109,6 @@ function InceptionB(cx, num_1_before_3, num_3, num_1_before_d3, num_d3)
     return InceptionB(c1_before_3, c1_before_d3, c3, cd3_1, cd3_2)
 end
 
-# function (i::InceptionB)(x)
-#     num_3 = size(i.c3.w, 4)
-#     num_d3 = size(i.cd3_2.w, 4)
-#     num_pool = size(x, 3)
-#     dims = (size(x, 1)/2, size(x, 2)/2, num_3 + num_d3 + num_pool, size(x, 4))
-#
-#     y = KnetArray{Float32}(undef, dims)
-#
-#     y[:, :, 1:num3, :] = i.c3(i.c1_before_3(x))
-#     y[:, :, num3+1:num3+numd3, :] = i.cd3_2(i.cd3_1(i.c1_before_d3(x)))
-#     y[:, :, num3+numd3+1:num_3+num_d3+num_pool, :] = pool(x, window=3, stride=2, padding=1)
-#     return y
-# end
-# function (i::InceptionB)(x)
-#     y1 = i.c3(i.c1_before_3(x))
-#     y2 = i.cd3_2(i.cd3_1(i.c1_before_d3(x)))
-#     y3 = pool(x, window=3, stride=2, padding=1)
-#     return KnetArray(cat(Array(y1), Array(y2), Array(y3), dims=3))
-# end
 function (i::InceptionB)(x)
     y1 = i.c3(i.c1_before_3(x))
     y2 = i.cd3_2(i.cd3_1(i.c1_before_d3(x)))
@@ -171,6 +123,7 @@ function (i::InceptionB)(x)
     return reshape(y_2d, old_size[1], old_size[2], :, old_size[4])
 end
 
+"Builds an Inception-BN network model"
 function create_inception_bn_model(num_channels::Int, num_classes::Int)
     Chain(
         Conv(7, 7, num_channels, 64, padding=3, stride=2),
@@ -197,7 +150,8 @@ function create_inception_bn_model(num_channels::Int, num_classes::Int)
     )
 end
 
-function create_inception_bn_small_model(num_channels::Int, num_classes::Int)
+"Builds an Inception-BN network model modified to take 32x32 images"
+function create_inception_bn_cifar_model(num_channels::Int, num_classes::Int)
     Chain(
         Conv(3, 3, num_channels, 64),
 
@@ -208,12 +162,11 @@ function create_inception_bn_small_model(num_channels::Int, num_classes::Int)
         InceptionA(256, 64, 64, 96, 64, 96, 64, 2),
         InceptionB(320, 128, 160, 64, 96),
 
-        # InceptionA(576, 224, 64, 96, 96, 128, 128, 2),
-        # InceptionA(576, 192, 96, 128, 96, 128, 128, 2),
+        InceptionA(576, 224, 64, 96, 96, 128, 128, 2),
+        InceptionA(576, 192, 96, 128, 96, 128, 128, 2),
         InceptionA(576, 160, 128, 160, 128, 160, 128, 2),
-        # InceptionA(608, 96, 128, 192, 160, 192, 128, 2),
-        InceptionB(608, 128, 192, 192, 256), # newly added
-        # InceptionB(576, 128, 192, 192, 256),
+        InceptionA(608, 96, 128, 192, 160, 192, 128, 2),
+        InceptionB(576, 128, 192, 192, 256),
 
         InceptionA(1056, 352, 192, 320, 160, 224, 128, 2),
         InceptionA(1024, 352, 192, 320, 192, 224, 128, 0),
@@ -239,6 +192,7 @@ function create_inception_bn_smaller_model(num_channels::Int, num_classes::Int)
     )
 end
 
+"Builds a CNN model consisting of 3x3 filters and 2x2 max pools"
 function create_cnn_model(num_channels::Int, num_classes::Int)
     Chain(
         Conv(3, 3, num_channels, 32),
