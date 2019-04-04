@@ -7,15 +7,24 @@ end
 (c::Chain)(x,y) = nll(c(x),y)
 (c::Chain)(d::Data) = mean(c(x,y) for (x,y) in d)
 
-# Dense (normal) layer
-mutable struct Dense; w; b; f; pdrop; end
-Dense(i::Int,o::Int,f=relu; pdrop=0) = Dense(param(o,i),param0(o),f,pdrop)
-(l::Dense)(x) = l.f.(l.w * dropout(x,l.pdrop) .+ l.b)
+# Linear layer
+mutable struct Linear; w; b; end
+Linear(i::Int,o::Int) = Linear(param(o,i),param0(o))
+(l::Linear)(x) = l.w * x .+ l.b
 
 # Softmax classifier layer
 mutable struct SoftmaxCls; w; b; end
 SoftmaxCls(i::Int,o::Int) = SoftmaxCls(param(o,i),param0(o))
 (l::SoftmaxCls)(x) = softmax(l.w * x .+ l.b)
+
+# Dense (normal) layer
+mutable struct Dense; w; b; f; pdrop; end
+Dense(i::Int,o::Int,f=relu; pdrop=0) = Dense(param(o,i),param0(o),f,pdrop)
+(l::Dense)(x) = l.f.(l.w * dropout(x,l.pdrop) .+ l.b)
+
+# Flatten layer. I had to make it a struct because otherwise it does not save to file
+struct Flatten; n::Int end
+(r::Flatten)(x) = reshape(x, (r.n,:))
 
 # Convolutional + pooling layer
 mutable struct ConvPool; w; b; f; p; end
@@ -23,6 +32,13 @@ mutable struct ConvPool; w; b; f; p; end
 ConvPool(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;pdrop=0) = ConvPool(param(w1,w2,cx,cy), param0(1,1,cy,1), f, pdrop)
 
 # Convolutional layer
+# struct Conv; w; b; f; padding; stride; end
+# function (c::Conv)(x)
+#     c.f.(conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b)
+# end
+# function Conv(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;padding=0,stride=1)
+#     return Conv(param(w1,w2,cx,cy), param0(1,1,cy,1), f, padding, stride)
+# end
 struct Conv; w; b; f; padding; stride; bn_params; bn_moments; end
 function (c::Conv)(x)
     c.f.(conv4(c.w, batchnorm(x, c.bn_moments, c.bn_params), padding=c.padding, stride=c.stride) .+ c.b)
@@ -37,6 +53,7 @@ struct Pool
     stride
     padding
     mode
+    Pool(window=2, stride=2, padding=0, mode=0) = new(window, stride, padding, mode)
 end
 (p::Pool)(x) = pool(x, window=p.window, stride=p.stride, padding=p.padding, mode=p.mode)
 
@@ -201,24 +218,42 @@ function create_inception_bn_small_model(num_channels::Int, num_classes::Int)
         InceptionA(1056, 352, 192, 320, 160, 224, 128, 2),
         InceptionA(1024, 352, 192, 320, 192, 224, 128, 0),
         Pool(7, 1, 0, 2),
-        x -> reshape(x, (1024,:)),
-        SoftmaxCls(1024, num_classes)
+        Flatten(1024),
+        Linear(1024, num_classes)
     )
 end
 function create_inception_bn_smaller_model(num_channels::Int, num_classes::Int)
     Chain(
-        Conv(3, 3, num_channels, 64),
-        Conv(3, 3, 64, 192),
+        Conv(3, 3, num_channels, 48),
+        Conv(3, 3, 48, 128),
 
-        InceptionA(192, 64, 64, 64, 64, 96, 32, 2),
-        InceptionA(256, 64, 64, 96, 64, 96, 64, 2),
-        InceptionB(320, 128, 160, 64, 96), # 14x14x576
+        InceptionA(128, 48, 48, 48, 48, 64, 24, 2),
+        InceptionA(184, 48, 48, 64, 48, 64, 48, 2),
+        InceptionB(224, 96, 128, 48, 64), # 14x14x576
 
         Pool(5, 3, 0, 2), # 4x4x576
-        Conv(1, 1, 576, 128),
-        x -> reshape(x, (2048,:)),
-        Dense(2048, 1024, pdrop=0.7),
-        SoftmaxCls(1024, num_classes)
+        Conv(1, 1, 416, 64),
+        Flatten(1024),
+        # Dense(1024, 1024, pdrop=0.7),
+        Linear(1024, num_classes)
+    )
+end
+
+function create_cnn_model(num_channels::Int, num_classes::Int)
+    Chain(
+        Conv(3, 3, num_channels, 32),
+        Conv(3, 3, 32, 48),
+        Pool(), # 14x14
+
+        Conv(3, 3, 48, 64),
+        Conv(3, 3, 64, 96),
+        Pool(), # 5x5
+
+        Conv(3, 3, 96, 128),
+        Conv(3, 3, 128, 192),
+
+        Flatten(192),
+        Linear(192, num_classes)
     )
 end
 
