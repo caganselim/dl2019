@@ -88,6 +88,11 @@ function wider_conv(layer, next_layer, new_channel_count, add_noise=true)
     extra_next_w = Array{Float32}(undef, (size(next_layer.w)[1:2]..., extra_count, size(next_layer.w)[4]))
     extra_b = Array{Float32}(undef, (1, 1, extra_count, 1))
 
+    if layer.bn_params != nothing
+        extra_bn_scales = atype()(undef, (extra_count,))
+        extra_bn_biases = atype()(undef, (extra_count,))
+    end
+
     extra_mapping = rand(1:old_channel_count, extra_count)
     copy_counts = ones(old_channel_count)
     for i in 1:extra_count
@@ -101,6 +106,10 @@ function wider_conv(layer, next_layer, new_channel_count, add_noise=true)
         extra_w[:, :, :, i] = convert(Array{Float32}, layer.w)[:, :, :, extra_mapping[i]]
         extra_next_w[:, :, i, :] = convert(Array{Float32}, next_layer.w)[:, :, extra_mapping[i], :]
         extra_b[1, 1, i, 1] = layer.b[1, 1, extra_mapping[i], 1]
+        if layer.bn_params != nothing
+            extra_bn_scales[i] = layer.bn_params[extra_mapping[i]]
+            extra_bn_biases[i] = layer.bn_params[old_channel_count+extra_mapping[i]]
+        end
     end
 
     extra_w = atype()(extra_w)
@@ -121,7 +130,9 @@ function wider_conv(layer, next_layer, new_channel_count, add_noise=true)
     w_extra_2d = reshape(extra_next_w, :, size(extra_next_w)[end])
     w_new_2d = vcat(w_old_2d, w_extra_2d)
     next_layer.w = Param(reshape(w_new_2d, old_size[1], old_size[2], :, old_size[4]))
-    # return new_model
+    if layer.bn_params != nothing
+        layer.bn_params = Param(cat(layer.bn_params[1:old_channel_count], extra_bn_scales, layer.bn_params[old_channel_count+1:end], extra_bn_biases, dims=1))
+    end
 end
 
 function test_wider_conv()
@@ -134,7 +145,7 @@ function test_wider_conv()
     wide = 72
     chosen_layer = 4
 
-    cnn_model = create_cnn_model(3, 10)
+    cnn_model = create_cnn_bn_model(3, 10)
     cnn_results, cnn_model = train_results(dtrn, dtst, "cnn.jld2", cnn_model, 5, false)
     cnn_wider = deepcopy(cnn_model)
     wider_conv(cnn_wider.layers[chosen_layer], cnn_wider.layers[chosen_layer+1], wide)
@@ -156,6 +167,7 @@ function test_wider_conv()
         sames += sum(y_olds .- y_news .< 0.01)
         total += length(y_olds)
     end
+
     @assert sames/total == 1 "Function is not preserved"
     println("wider conv test passed")
 end

@@ -43,10 +43,10 @@ end
 # Convolutional + Batchnorm layer
 mutable struct ConvBN; w; b; f; padding; stride; bn_params; bn_moments; end
 function (c::ConvBN)(x)
-    c.f.(conv4(c.w, batchnorm(x, c.bn_moments, c.bn_params), padding=c.padding, stride=c.stride) .+ c.b)
+    c.f.(batchnorm(conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b, c.bn_moments, c.bn_params))
 end
 function ConvBN(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;padding=0,stride=1)
-    return ConvBN(param(w1,w2,cx,cy), param0(1,1,cy,1), f, padding, stride, convert(atype(), bnparams(cx)), bnmoments())
+    return ConvBN(param(w1,w2,cx,cy), param0(1,1,cy,1), f, padding, stride, Param(convert(atype(), bnparams(cy))), bnmoments())
 end
 
 # Pooling layer
@@ -214,6 +214,25 @@ function create_cnn_model(num_channels::Int, num_classes::Int)
 
         Conv(3, 3, 96, 128),
         Conv(3, 3, 128, 192),
+
+        Flatten(192),
+        Linear(192, num_classes)
+    )
+end
+
+"Builds a CNN-BN model consisting of 3x3 filters and 2x2 max pools"
+function create_cnn_bn_model(num_channels::Int, num_classes::Int)
+    Chain(
+        ConvBN(3, 3, num_channels, 32),
+        ConvBN(3, 3, 32, 48),
+        Pool(), # 14x14
+
+        ConvBN(3, 3, 48, 64),
+        ConvBN(3, 3, 64, 96),
+        Pool(), # 5x5
+
+        ConvBN(3, 3, 96, 128),
+        ConvBN(3, 3, 128, 192),
 
         Flatten(192),
         Linear(192, num_classes)
