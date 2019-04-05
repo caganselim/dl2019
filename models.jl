@@ -31,13 +31,22 @@ mutable struct ConvPool; w; b; f; p; end
 (c::ConvPool)(x) = c.f.(pool(conv4(c.w, dropout(x,c.p)) .+ c.b))
 ConvPool(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;pdrop=0) = ConvPool(param(w1,w2,cx,cy), param0(1,1,cy,1), f, pdrop)
 
-# Convolutional layer
-struct Conv; w; b; f; padding; stride; bn_params; bn_moments; end
+# Convolutional
+mutable struct Conv; w; b; f; padding; stride; end
 function (c::Conv)(x)
-    c.f.(conv4(c.w, batchnorm(x, c.bn_moments, c.bn_params), padding=c.padding, stride=c.stride) .+ c.b)
+    c.f.(conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b)
 end
 function Conv(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;padding=0,stride=1)
-    return Conv(param(w1,w2,cx,cy), param0(1,1,cy,1), f, padding, stride, convert(atype(), bnparams(cx)), bnmoments())
+    return Conv(param(w1,w2,cx,cy), param0(1,1,cy,1), f, padding, stride)
+end
+
+# Convolutional + Batchnorm layer
+mutable struct ConvBN; w; b; f; padding; stride; bn_params; bn_moments; end
+function (c::ConvBN)(x)
+    c.f.(conv4(c.w, batchnorm(x, c.bn_moments, c.bn_params), padding=c.padding, stride=c.stride) .+ c.b)
+end
+function ConvBN(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;padding=0,stride=1)
+    return ConvBN(param(w1,w2,cx,cy), param0(1,1,cy,1), f, padding, stride, convert(atype(), bnparams(cx)), bnmoments())
 end
 
 # Pooling layer
@@ -52,26 +61,26 @@ end
 
 # Inception modules
 struct InceptionA
-    c1_alone::Conv
-    c1_before_3::Conv
-    c1_before_d3::Conv
-    c1_after_pool::Conv
+    c1_alone::ConvBN
+    c1_before_3::ConvBN
+    c1_before_d3::ConvBN
+    c1_after_pool::ConvBN
 
-    c3::Conv
-    cd3_1::Conv
-    cd3_2::Conv
+    c3::ConvBN
+    cd3_1::ConvBN
+    cd3_2::ConvBN
     pool_mode::Int
 end
 
 function InceptionA(cx, num_1, num_1_before_3, num_3, num_1_before_d3, num_d3, num_1_after_pool, pool_mode)
-    c1_alone = Conv(1, 1, cx, num_1)
-    c1_before_3 = Conv(1, 1, cx, num_1_before_3)
-    c1_before_d3 = Conv(1, 1, cx, num_1_before_d3)
-    c1_after_pool = Conv(1, 1, cx, num_1_after_pool)
+    c1_alone = ConvBN(1, 1, cx, num_1)
+    c1_before_3 = ConvBN(1, 1, cx, num_1_before_3)
+    c1_before_d3 = ConvBN(1, 1, cx, num_1_before_d3)
+    c1_after_pool = ConvBN(1, 1, cx, num_1_after_pool)
 
-    c3 = Conv(3, 3, num_1_before_3, num_3, padding=1)
-    cd3_1 = Conv(3, 3, num_1_before_d3, num_d3, padding=1)
-    cd3_2 = Conv(3, 3, num_d3, num_d3, padding=1)
+    c3 = ConvBN(3, 3, num_1_before_3, num_3, padding=1)
+    cd3_1 = ConvBN(3, 3, num_1_before_d3, num_d3, padding=1)
+    cd3_2 = ConvBN(3, 3, num_d3, num_d3, padding=1)
     return InceptionA(c1_alone, c1_before_3, c1_before_d3, c1_after_pool, c3, cd3_1, cd3_2, pool_mode)
 end
 
@@ -92,20 +101,20 @@ function (i::InceptionA)(x)
 end
 
 struct InceptionB
-    c1_before_3::Conv
-    c1_before_d3::Conv
+    c1_before_3::ConvBN
+    c1_before_d3::ConvBN
 
-    c3::Conv
-    cd3_1::Conv
-    cd3_2::Conv
+    c3::ConvBN
+    cd3_1::ConvBN
+    cd3_2::ConvBN
 end
 function InceptionB(cx, num_1_before_3, num_3, num_1_before_d3, num_d3)
-    c1_before_3 = Conv(1, 1, cx, num_1_before_3)
-    c1_before_d3 = Conv(1, 1, cx, num_1_before_d3)
+    c1_before_3 = ConvBN(1, 1, cx, num_1_before_3)
+    c1_before_d3 = ConvBN(1, 1, cx, num_1_before_d3)
 
-    c3 = Conv(3, 3, num_1_before_3, num_3, padding=1, stride=2)
-    cd3_1 = Conv(3, 3, num_1_before_d3, num_d3, padding=1)
-    cd3_2 = Conv(3, 3, num_d3, num_d3, padding=1, stride=2)
+    c3 = ConvBN(3, 3, num_1_before_3, num_3, padding=1, stride=2)
+    cd3_1 = ConvBN(3, 3, num_1_before_d3, num_d3, padding=1)
+    cd3_2 = ConvBN(3, 3, num_d3, num_d3, padding=1, stride=2)
     return InceptionB(c1_before_3, c1_before_d3, c3, cd3_1, cd3_2)
 end
 
@@ -126,11 +135,11 @@ end
 "Builds an Inception-BN network model"
 function create_inception_bn_model(num_channels::Int, num_classes::Int)
     Chain(
-        Conv(7, 7, num_channels, 64, padding=3, stride=2),
+        ConvBN(7, 7, num_channels, 64, padding=3, stride=2),
         Pool(3, 2, 0, 0),
 
-        Conv(1, 1, 64, 64),
-        Conv(3, 3, 64, 192, padding=1),
+        ConvBN(1, 1, 64, 64),
+        ConvBN(3, 3, 64, 192, padding=1),
         Pool(3, 2, 0, 0),
 
         InceptionA(192, 64, 64, 64, 64, 96, 32, 2),
@@ -153,10 +162,10 @@ end
 "Builds an Inception-BN network model modified to take 32x32 images"
 function create_inception_bn_cifar_model(num_channels::Int, num_classes::Int)
     Chain(
-        Conv(3, 3, num_channels, 64),
+        ConvBN(3, 3, num_channels, 64),
 
-        Conv(1, 1, 64, 64),
-        Conv(3, 3, 64, 192),
+        ConvBN(1, 1, 64, 64),
+        ConvBN(3, 3, 64, 192),
 
         InceptionA(192, 64, 64, 64, 64, 96, 32, 2),
         InceptionA(256, 64, 64, 96, 64, 96, 64, 2),
@@ -177,15 +186,15 @@ function create_inception_bn_cifar_model(num_channels::Int, num_classes::Int)
 end
 function create_inception_bn_smaller_model(num_channels::Int, num_classes::Int)
     Chain(
-        Conv(3, 3, num_channels, 48),
-        Conv(3, 3, 48, 128),
+        ConvBN(3, 3, num_channels, 48),
+        ConvBN(3, 3, 48, 128),
 
         InceptionA(128, 48, 48, 48, 48, 64, 24, 2),
         InceptionA(184, 48, 48, 64, 48, 64, 48, 2),
         InceptionB(224, 96, 128, 48, 64), # 14x14x576
 
         Pool(5, 3, 0, 2), # 4x4x576
-        Conv(1, 1, 416, 64),
+        ConvBN(1, 1, 416, 64),
         Flatten(1024),
         # Dense(1024, 1024, pdrop=0.7),
         Linear(1024, num_classes)
