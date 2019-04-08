@@ -175,7 +175,7 @@ function create_inception_bn_cifar_model(num_channels::Int, num_classes::Int)
         InceptionA(576, 192, 96, 128, 96, 128, 128, 2),
         InceptionA(576, 160, 128, 160, 128, 160, 128, 2),
         InceptionA(608, 96, 128, 192, 160, 192, 128, 2),
-        InceptionB(576, 128, 192, 192, 256),
+        InceptionB(608, 128, 192, 192, 256),
 
         InceptionA(1056, 352, 192, 320, 160, 224, 128, 2),
         InceptionA(1024, 352, 192, 320, 192, 224, 128, 0),
@@ -184,55 +184,51 @@ function create_inception_bn_cifar_model(num_channels::Int, num_classes::Int)
         Linear(1024, num_classes)
     )
 end
-function create_inception_bn_smaller_model(num_channels::Int, num_classes::Int)
+function create_inception_bn_sm_model(num_channels::Int, num_classes::Int)
     Chain(
         ConvBN(3, 3, num_channels, 48),
         ConvBN(3, 3, 48, 128),
 
         InceptionA(128, 48, 48, 48, 48, 64, 24, 2),
         InceptionA(184, 48, 48, 64, 48, 64, 48, 2),
-        InceptionB(224, 96, 128, 48, 64), # 14x14x576
+        InceptionB(224, 96, 128, 48, 64),
 
-        Pool(5, 3, 0, 2), # 4x4x576
+        Pool(5, 3, 0, 2),
         ConvBN(1, 1, 416, 64),
         Flatten(1024),
-        # Dense(1024, 1024, pdrop=0.7),
+        Linear(1024, num_classes)
+    )
+end
+function create_inception_bn_sm_narrow_model(num_channels::Int, num_classes::Int)
+    Chain(
+        ConvBN(3, 3, num_channels, 48),
+        ConvBN(3, 3, 48, 96),
+
+        InceptionA(96, 26, 26, 26, 26, 35, 13, 2),
+        InceptionA(100, 26, 26, 35, 26, 35, 26, 2),
+        InceptionB(122, 53, 70, 26, 35),
+
+        Pool(5, 3, 0, 2),
+        ConvBN(1, 1, 227, 64),
+        Flatten(1024),
         Linear(1024, num_classes)
     )
 end
 
 "Builds a CNN model consisting of 3x3 filters and 2x2 max pools"
-function create_cnn_model(num_channels::Int, num_classes::Int)
+function create_cnn_model(num_channels::Int, num_classes::Int, use_bn::Bool)
+    C = use_bn ? ConvBN : Conv
     Chain(
-        Conv(3, 3, num_channels, 32),
-        Conv(3, 3, 32, 48),
+        C(3, 3, num_channels, 32),
+        C(3, 3, 32, 48),
         Pool(), # 14x14
 
-        Conv(3, 3, 48, 64),
-        Conv(3, 3, 64, 96),
+        C(3, 3, 48, 64),
+        C(3, 3, 64, 96),
         Pool(), # 5x5
 
-        Conv(3, 3, 96, 128),
-        Conv(3, 3, 128, 192),
-
-        Flatten(192),
-        Linear(192, num_classes)
-    )
-end
-
-"Builds a CNN-BN model consisting of 3x3 filters and 2x2 max pools"
-function create_cnn_bn_model(num_channels::Int, num_classes::Int)
-    Chain(
-        ConvBN(3, 3, num_channels, 32),
-        ConvBN(3, 3, 32, 48),
-        Pool(), # 14x14
-
-        ConvBN(3, 3, 48, 64),
-        ConvBN(3, 3, 64, 96),
-        Pool(), # 5x5
-
-        ConvBN(3, 3, 96, 128),
-        ConvBN(3, 3, 128, 192),
+        C(3, 3, 96, 128),
+        C(3, 3, 128, 192),
 
         Flatten(192),
         Linear(192, num_classes)
@@ -262,4 +258,12 @@ function create_mlp_model(i::Int, o::Int, h_units::Int ... ; f=relu)
 
     layers = (Dense(lp...) for lp in layer_params)
     return Chain(layers...)
+end
+
+# Utility function that calculates the output channel size of Inception modules
+function out_channel_count(i::InceptionA)
+    return size(i.c1_alone.w, 4) + size(i.c3.w, 4) + size(i.cd3_2.w, 4) + size(i.c1_after_pool.w, 4)
+end
+function out_channel_count(i::InceptionB)
+    return size(i.c3.w, 4) + size(i.cd3_2.w, 4) + size(i.c1_before_3.w, 3)
 end

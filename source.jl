@@ -2,7 +2,7 @@ using Statistics
 using Knet: Knet, dir, zeroone, progress, sgd, load, save, gc, progress!, Param,
  KnetArray, gpu, Data, nll, relu, training, dropout, minibatch, param, param0,
  conv4, pool, mat, zeroone, sgd, adam, rmsprop, adagrad, sigm, softmax, tanh,
- batchnorm, bnparams, bnmoments, accuracy
+ batchnorm, bnparams, bnmoments, accuracy, xavier
 using AutoGrad
 using Base.Iterators
 using Plots; default(fmt=:png,ls=:auto)
@@ -41,7 +41,7 @@ function train_results(dtrn, dtst, file, model, epochs=100, from_scratch=true, c
             # todo: continue training doesn't work for some reason
             new_r = ((model(dtrn), model(dtst), accuracy(model, dtrn), accuracy(model, dtst))
                  for x in take_every(length(dtrn), progress(adam(model, repeat(dtrn,epochs)))))
-            new_r = reshape(collect(Float32,flatten(r)),(4,:))
+            new_r = reshape(collect(Float32,flatten(new_r)),(4,:))
             r = hcat(r, new_r)
             Knet.save(file, "results", r, "model", model)
             Knet.gc() # To save gpu memory
@@ -73,11 +73,35 @@ function main()
     dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
     dtst = minibatch(xtst, ytst, 50, xtype=atype())
 
-    inception_cifar = create_inception_bn_smaller_model(3, 10)
-    inc_results, inc_model = train_results(dtrn, dtst, "inception_smaller.jld2", inception_cifar, 50, true)
-    plot([inc_results[1,:], inc_results[2,:]], labels=[:trnINC :tstINC], xlabel="Epochs", ylabel="Loss")
+    teacher = create_inception_bn_sm_narrow_model(3, 10)
+    results, teacher_trained = train_results(dtrn, dtst, "inception_sm_narrower.jld2", teacher, 3, true)
+    plot([results[1,:], results[2,:]], labels=["trn teacher" "tst teacher"], xlabel="Epochs", ylabel="Loss")
+    println("Teacher results: ", results)
+
+    growth_ratio = 1.0/sqrt(0.3)
+
+    wider = deepcopy(teacher)
+    wider_inceptionA(wider.layers[3], wider.layers[4], growth_ratio)
+    wider_inceptionA(wider.layers[4], wider.layers[5], wider.layers[7], growth_ratio)
+    wider_inceptionB(wider.layers[5], wider.layers[7], growth_ratio)
+
+    padded = deepcopy(teacher)
+    random_pad_inceptionA(padded.layers[3], padded.layers[4], growth_ratio)
+    random_pad_inceptionA(padded.layers[4], padded.layers[5], padded.layers[7], growth_ratio)
+    random_pad_inceptionB(padded.layers[5], padded.layers[7], growth_ratio)
+
+    results, wider_trained = train_results(dtrn, dtst, "inception_sm_wider2.jld2", wider, 5, true)
+    plot([results[1,:], results[2,:]], labels=["trn wider" "tst wider"], xlabel="Epochs", ylabel="Loss")
+    println("Wider results: ", results)
+
+    results, padded_trained = train_results(dtrn, dtst, "inception_sm_padded2.jld2", padded, 5, true)
+    plot([results[1,:], results[2,:]], labels=["trn padded" "tst padded"], xlabel="Epochs", ylabel="Loss")
+    println("Padded results: ", results)
 end
 
-# main()
-test_wider_conv()
+Knet.gc()
+main()
+# test_random_pad_inception()
+# test_wider_inception()
+# test_wider_conv()
 # test_wider_mlp()
