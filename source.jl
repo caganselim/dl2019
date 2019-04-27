@@ -2,7 +2,8 @@ using Statistics
 using Knet: Knet, dir, zeroone, progress, sgd, load, save, gc, progress!, Param,
  KnetArray, gpu, Data, nll, relu, training, dropout, minibatch, param, param0,
  conv4, pool, mat, zeroone, sgd, adam, rmsprop, adagrad, sigm, softmax, tanh,
- batchnorm, bnparams, bnmoments, accuracy, xavier
+  batchnorm, bnparams, bnmoments, BNMoments, _update_moments!, _lazy_init!
+  accuracy, xavier
 using AutoGrad
 using Base.Iterators
 using Plots; default(fmt=:png,ls=:auto)
@@ -14,6 +15,7 @@ include(Knet.dir("data", "cifar.jl"))
 
 include("models.jl")
 include("wider.jl")
+include("deeper.jl")
 
 # The global device setting (to reduce gpu() calls)
 let at = nothing
@@ -68,39 +70,42 @@ function load_data()
 end
 
 function main()
-    (xtrn, ytrn), (xtst, ytst) = load_data()
+    # (xtrn, ytrn), (xtst, ytst) = load_data()
+    #
+    # dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
+    # dtst = minibatch(xtst, ytst, 50, xtype=atype())
+    #
+    # teacher = create_inception_bn_sm_narrow_model(3, 10)
+    # results, teacher_trained = train_results(dtrn, dtst, "inception_sm_narrower.jld2", teacher, 3, false, false)
+    # plot([results[1,:], results[2,:]], labels=["trn teacher" "tst teacher"], xlabel="Epochs", ylabel="Loss")
+    # println("Teacher results: ", results)
+    #
+    # growth_ratio = 1.0/sqrt(0.3)
 
-    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
-    dtst = minibatch(xtst, ytst, 50, xtype=atype())
+    # wider = deepcopy(teacher)
+    # wider_inceptionA(wider.layers[3], wider.layers[4], growth_ratio)
+    # wider_inceptionA(wider.layers[4], wider.layers[5], wider.layers[7], growth_ratio)
+    # wider_inceptionB(wider.layers[5], wider.layers[7], growth_ratio)
+    #
+    # padded = deepcopy(teacher)
+    # random_pad_inceptionA(padded.layers[3], padded.layers[4], growth_ratio)
+    # random_pad_inceptionA(padded.layers[4], padded.layers[5], padded.layers[7], growth_ratio)
+    # random_pad_inceptionB(padded.layers[5], padded.layers[7], growth_ratio)
+    #
+    # results, wider_trained = train_results(dtrn, dtst, "inception_sm_wider2.jld2", wider, 5, true)
+    # plot([results[1,:], results[2,:]], labels=["trn wider" "tst wider"], xlabel="Epochs", ylabel="Loss")
+    # println("Wider results: ", results)
+    #
+    # results, padded_trained = train_results(dtrn, dtst, "inception_sm_padded2.jld2", padded, 5, true)
+    # plot([results[1,:], results[2,:]], labels=["trn padded" "tst padded"], xlabel="Epochs", ylabel="Loss")
+    # println("Padded results: ", results)
 
-    teacher = create_inception_bn_sm_narrow_model(3, 10)
-    results, teacher_trained = train_results(dtrn, dtst, "inception_sm_narrower.jld2", teacher, 3, true)
-    plot([results[1,:], results[2,:]], labels=["trn teacher" "tst teacher"], xlabel="Epochs", ylabel="Loss")
-    println("Teacher results: ", results)
-
-    growth_ratio = 1.0/sqrt(0.3)
-
-    wider = deepcopy(teacher)
-    wider_inceptionA(wider.layers[3], wider.layers[4], growth_ratio)
-    wider_inceptionA(wider.layers[4], wider.layers[5], wider.layers[7], growth_ratio)
-    wider_inceptionB(wider.layers[5], wider.layers[7], growth_ratio)
-
-    padded = deepcopy(teacher)
-    random_pad_inceptionA(padded.layers[3], padded.layers[4], growth_ratio)
-    random_pad_inceptionA(padded.layers[4], padded.layers[5], padded.layers[7], growth_ratio)
-    random_pad_inceptionB(padded.layers[5], padded.layers[7], growth_ratio)
-
-    results, wider_trained = train_results(dtrn, dtst, "inception_sm_wider2.jld2", wider, 5, true)
-    plot([results[1,:], results[2,:]], labels=["trn wider" "tst wider"], xlabel="Epochs", ylabel="Loss")
-    println("Wider results: ", results)
-
-    results, padded_trained = train_results(dtrn, dtst, "inception_sm_padded2.jld2", padded, 5, true)
-    plot([results[1,:], results[2,:]], labels=["trn padded" "tst padded"], xlabel="Epochs", ylabel="Loss")
-    println("Padded results: ", results)
+    m = create_cnn_model(3, 10, false)
+    deeper_conv(m.layers[4])
 end
 
 Knet.gc()
-main()
+test_deeper_conv()
 # test_random_pad_inception()
 # test_wider_inception()
 # test_wider_conv()

@@ -1,7 +1,7 @@
 # A chain of layers used to build models
 struct Chain
-    layers
-    Chain(layers...) = new(layers)
+    layers::Array
+    Chain(layers...) = new(collect(layers))
 end
 (c::Chain)(x) = (for l in c.layers; x = l(x); end; x)
 (c::Chain)(x,y) = nll(c(x),y)
@@ -31,7 +31,7 @@ mutable struct ConvPool; w; b; f; p; end
 (c::ConvPool)(x) = c.f.(pool(conv4(c.w, dropout(x,c.p)) .+ c.b))
 ConvPool(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;pdrop=0) = ConvPool(param(w1,w2,cx,cy), param0(1,1,cy,1), f, pdrop)
 
-# Convolutional
+# Convolutional layer
 mutable struct Conv; w; b; f; padding; stride; end
 function (c::Conv)(x)
     c.f.(conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b)
@@ -40,10 +40,34 @@ function Conv(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;padding=0,stride=1)
     return Conv(param(w1,w2,cx,cy), param0(1,1,cy,1), f, padding, stride)
 end
 
+function my_bn(x, bn_moments, bn_params)
+    eps = 1e-5
+    ivar = 1 ./ sqrt.(bn_moments.var .+ eps)
+
+    g = reshape(bn_params[1:size(x, 3)], (1, 1, size(x, 3), 1))
+    b = reshape(bn_params[size(x, 3)+1:end], (1, 1, size(x, 3), 1))
+    return g .* (x .- bn_moments.mean) .* ivar .+ b
+end
+
 # Convolutional + Batchnorm layer
 mutable struct ConvBN; w; b; f; padding; stride; bn_params; bn_moments; end
 function (c::ConvBN)(x)
-    c.f.(batchnorm(conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b, c.bn_moments, c.bn_params))
+    # abnmoments = BNMoments(c.bn_moments.momentum, convert(Array, c.bn_moments.mean), convert(Array, c.bn_moments.var), zeros, ones)
+    # abnparams = convert(Array, c.bn_params)
+    # ah = convert(Array, conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b)
+    # c.f.(convert(atype(), batchnorm(ah, abnmoments, abnparams)))
+    y_conv = conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b
+    # c.f.(my_bn(y_conv, c.bn_moments, c.bn_params))
+    c.f.(batchnorm(y_conv, c.bn_moments, c.bn_params))
+
+    #original: c.f.(batchnorm(conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b, c.bn_moments, c.bn_params))
+end
+function (c::ConvBN)(x, skip_bn::Bool)
+    y_conv = conv4(c.w, x, padding=c.padding, stride=c.stride) .+ c.b
+    if skip_bn
+        return c.f.(y_conv)
+    end
+    return c.f.(batchnorm(y_conv, c.bn_moments, c.bn_params))
 end
 function ConvBN(w1::Int,w2::Int,cx::Int,cy::Int,f=relu;padding=0,stride=1)
     return ConvBN(param(w1,w2,cx,cy), param0(1,1,cy,1), f, padding, stride, Param(convert(atype(), bnparams(cy))), bnmoments())
