@@ -187,38 +187,38 @@ function noise_experiment(dtrn, dtst)
 
     growth_ratio = 1.0/sqrt(0.3)
 
-    # wider_no_noise = deepcopy(teacher)
-    # wider_inceptionA(wider_no_noise.layers[3], wider_no_noise.layers[4], growth_ratio, false)
-    # wider_inceptionA(wider_no_noise.layers[4], wider_no_noise.layers[5], wider_no_noise.layers[7], growth_ratio, false)
-    # wider_inceptionB(wider_no_noise.layers[5], wider_no_noise.layers[7], growth_ratio, false)
+    wider_no_noise = deepcopy(teacher)
+    wider_inceptionA(wider_no_noise.layers[3], wider_no_noise.layers[4], growth_ratio, false)
+    wider_inceptionA(wider_no_noise.layers[4], wider_no_noise.layers[5], wider_no_noise.layers[7], growth_ratio, false)
+    wider_inceptionB(wider_no_noise.layers[5], wider_no_noise.layers[7], growth_ratio, false)
 
-    # wider_noise_1 = deepcopy(teacher)
-    # wider_inceptionA(wider_noise_1.layers[3], wider_noise_1.layers[4], growth_ratio, true, 0.01)
-    # wider_inceptionA(wider_noise_1.layers[4], wider_noise_1.layers[5], wider_noise_1.layers[7], growth_ratio, true, 0.01)
-    # wider_inceptionB(wider_noise_1.layers[5], wider_noise_1.layers[7], growth_ratio, true, 0.01)
+    wider_noise_1 = deepcopy(teacher)
+    wider_inceptionA(wider_noise_1.layers[3], wider_noise_1.layers[4], growth_ratio, true, 0.01)
+    wider_inceptionA(wider_noise_1.layers[4], wider_noise_1.layers[5], wider_noise_1.layers[7], growth_ratio, true, 0.01)
+    wider_inceptionB(wider_noise_1.layers[5], wider_noise_1.layers[7], growth_ratio, true, 0.01)
 
     wider_noise_2 = deepcopy(teacher)
     wider_inceptionA(wider_noise_2.layers[3], wider_noise_2.layers[4], growth_ratio, true, 0.05)
     wider_inceptionA(wider_noise_2.layers[4], wider_noise_2.layers[5], wider_noise_2.layers[7], growth_ratio, true, 0.05)
     wider_inceptionB(wider_noise_2.layers[5], wider_noise_2.layers[7], growth_ratio, true, 0.05)
 
-    # wider_noise_3 = deepcopy(teacher)
-    # wider_inceptionA(wider_noise_3.layers[3], wider_noise_3.layers[4], growth_ratio, true, 0.1)
-    # wider_inceptionA(wider_noise_3.layers[4], wider_noise_3.layers[5], wider_noise_3.layers[7], growth_ratio, true, 0.1)
-    # wider_inceptionB(wider_noise_3.layers[5], wider_noise_3.layers[7], growth_ratio, true, 0.1)
+    wider_noise_3 = deepcopy(teacher)
+    wider_inceptionA(wider_noise_3.layers[3], wider_noise_3.layers[4], growth_ratio, true, 0.1)
+    wider_inceptionA(wider_noise_3.layers[4], wider_noise_3.layers[5], wider_noise_3.layers[7], growth_ratio, true, 0.1)
+    wider_inceptionB(wider_noise_3.layers[5], wider_noise_3.layers[7], growth_ratio, true, 0.1)
 
 
-    # results, wider = train_results(dtrn, dtst, "inception_sm_exp_wider_no_noise.jld2", wider_no_noise, 5, true)
-    # println("Wider no noise results: ", results)
-    # writedlm("res/noise_res_no.txt", results)
+    results, wider = train_results(dtrn, dtst, "inception_sm_exp_wider_no_noise.jld2", wider_no_noise, 5, true)
+    println("Wider no noise results: ", results)
+    writedlm("res/noise_res_no.txt", results)
 
     results, wider = train_results(dtrn, dtst, "inception_sm_exp_wider_noise_2.jld2", wider_noise_2, 5, true)
     println("Wider noise 2 results: ", results)
     writedlm("res/noise_res_2.txt", results)
 
-    # results, wider = train_results(dtrn, dtst, "inception_sm_exp_wider_noise_3.jld2", wider_noise_3, 5, true)
-    # println("Wider noise 3 results: ", results)
-    # writedlm("res/noise_res_3.txt", results)
+    results, wider = train_results(dtrn, dtst, "inception_sm_exp_wider_noise_3.jld2", wider_noise_3, 5, true)
+    println("Wider noise 3 results: ", results)
+    writedlm("res/noise_res_3.txt", results)
 end
 
 function main()
@@ -227,9 +227,9 @@ function main()
     dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
     dtst = minibatch(xtst, ytst, 50, xtype=atype())
 
-    # wider_experiment(dtrn, dtst)
-    # deeper_experiment(dtrn, dtst)
-    # explore_experiment(dtrn, dtst)
+    wider_experiment(dtrn, dtst)
+    deeper_experiment(dtrn, dtst)
+    explore_experiment(dtrn, dtst)
     noise_experiment(dtrn, dtst)
 end
 
