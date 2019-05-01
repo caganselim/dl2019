@@ -73,7 +73,7 @@ Net2WiderNet method for Convs.
 Grows one of the layers of the model to a new one with more filter channels.
 Function is preserved during the widening.
 """
-function wider_conv(layer, next_layer, new_channel_count, add_noise=true)
+function wider_conv(layer, next_layer, new_channel_count, add_noise=true, noise_factor=0.01)
     old_channel_count = size(layer.w, 4)
     if old_channel_count >= new_channel_count
         println("New channel count must be greater than old channel count")
@@ -106,9 +106,9 @@ function wider_conv(layer, next_layer, new_channel_count, add_noise=true)
     array_next_layer_w = next_layer != nothing ? convert(Array{Float32}, next_layer.w) : nothing
     # Set the extra weights
     for i in 1:extra_count
-        extra_w[:, :, :, i] = array_layer_w[:, :, :, extra_mapping[i]] .+ (add_noise ? randn()*0.01 : 0)
+        extra_w[:, :, :, i] = array_layer_w[:, :, :, extra_mapping[i]] .+ (add_noise ? randn()*noise_factor : 0)
         if next_layer != nothing
-            extra_next_w[:, :, i, :] = array_next_layer_w[:, :, extra_mapping[i], :] .+ (add_noise ? randn()*0.01 : 0)
+            extra_next_w[:, :, i, :] = array_next_layer_w[:, :, extra_mapping[i], :] .+ (add_noise ? randn()*noise_factor : 0)
         end
         extra_b[1, 1, i, 1] = layer.b[1, 1, extra_mapping[i], 1]
         if layer.bn_params != nothing
@@ -145,11 +145,11 @@ function wider_conv(layer, next_layer, new_channel_count, add_noise=true)
     return extra_mapping
 end
 
-function wider_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio, add_noise::Bool=true)
+function wider_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio, add_noise::Bool=true, noise_factor=0.01)
     # Grow inside layers normally
-    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), add_noise)
-    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), add_noise)
-    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), add_noise)
+    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), add_noise, noise_factor)
+    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), add_noise, noise_factor)
+    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), add_noise, noise_factor)
 
     old_c1_count = size(inc.c1_alone.w, 4)
     old_c3_count = size(inc.c3.w, 4)
@@ -161,10 +161,10 @@ function wider_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio, add_noi
     new_cd3_count = Int64(round(old_cd3_count*(grow_ratio)))
     new_c1_ap_count = Int64(round(old_c1_ap_count*(grow_ratio)))
 
-    c1_extra_mappings = wider_conv(inc.c1_alone, nothing, new_c1_count, add_noise)
-    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, add_noise)
-    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, add_noise)
-    c1_ap_extra_mappings = wider_conv(inc.c1_after_pool, nothing, new_c1_ap_count, add_noise)
+    c1_extra_mappings = wider_conv(inc.c1_alone, nothing, new_c1_count, add_noise, noise_factor)
+    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, add_noise, noise_factor)
+    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, add_noise, noise_factor)
+    c1_ap_extra_mappings = wider_conv(inc.c1_after_pool, nothing, new_c1_ap_count, add_noise, noise_factor)
 
     c1_mappings = vcat(1:old_c1_count, c1_extra_mappings)
     c3_mappings = vcat(1:old_c3_count, c3_extra_mappings) .+ old_c1_count
@@ -189,16 +189,16 @@ function wider_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio, add_noi
         array_w = convert(Array{Float32}, c.w)
         # Set the extra weights
         for i in 1:new_channel_count
-            new_w[:, :, i, :] = array_w[:, :, total_mappings[i], :] .+ (add_noise ? randn()*0.01 : 0)
+            new_w[:, :, i, :] = array_w[:, :, total_mappings[i], :] .+ (add_noise ? randn()*noise_factor : 0)
         end
         c.w = Param(atype()(new_w))
     end
 end
 
-function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, grow_ratio, add_noise::Bool=true)
-    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), add_noise)
-    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), add_noise)
-    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), add_noise)
+function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, grow_ratio, add_noise::Bool=true, noise_factor=0.01)
+    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), add_noise, noise_factor)
+    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), add_noise, noise_factor)
+    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), add_noise, noise_factor)
 
     old_c1_count = size(inc.c1_alone.w, 4)
     old_c3_count = size(inc.c3.w, 4)
@@ -210,10 +210,10 @@ function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, gr
     new_cd3_count = Int64(round(old_cd3_count*(grow_ratio)))
     new_c1_ap_count = Int64(round(old_c1_ap_count*(grow_ratio)))
 
-    c1_extra_mappings = wider_conv(inc.c1_alone, nothing, new_c1_count, add_noise)
-    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, add_noise)
-    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, add_noise)
-    c1_ap_extra_mappings = wider_conv(inc.c1_after_pool, nothing, new_c1_ap_count, add_noise)
+    c1_extra_mappings = wider_conv(inc.c1_alone, nothing, new_c1_count, add_noise, noise_factor)
+    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, add_noise, noise_factor)
+    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, add_noise, noise_factor)
+    c1_ap_extra_mappings = wider_conv(inc.c1_after_pool, nothing, new_c1_ap_count, add_noise, noise_factor)
 
     c1_mappings = vcat(1:old_c1_count, c1_extra_mappings)
     c3_mappings = vcat(1:old_c3_count, c3_extra_mappings) .+ old_c1_count
@@ -238,7 +238,7 @@ function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, gr
         array_w = convert(Array{Float32}, c.w)
         # Set the extra weights
         for i in 1:new_channel_count
-            new_w[:, :, i, :] = array_w[:, :, total_mappings[i], :] .+ (add_noise ? randn()*0.01 : 0)
+            new_w[:, :, i, :] = array_w[:, :, total_mappings[i], :] .+ (add_noise ? randn()*noise_factor : 0)
         end
         c.w = Param(atype()(new_w))
     end
@@ -259,11 +259,11 @@ function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, gr
     after_b.w = Param(atype()(cat(w_first, new_w_last, dims=3)))
 end
 
-function wider_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio, add_noise::Bool=true)
+function wider_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio, add_noise::Bool=true, noise_factor=0.01)
     # Grow inside layers normally
-    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), add_noise)
-    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), add_noise)
-    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), add_noise)
+    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), add_noise, noise_factor)
+    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), add_noise, noise_factor)
+    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), add_noise, noise_factor)
 
     old_c3_count = size(inc.c3.w, 4)
     old_cd3_count = size(inc.cd3_2.w, 4)
@@ -271,8 +271,8 @@ function wider_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio, add_noise::
     new_c3_count = Int64(round(old_c3_count*(grow_ratio)))
     new_cd3_count = Int64(round(old_cd3_count*(grow_ratio)))
 
-    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, add_noise)
-    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, add_noise)
+    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, add_noise, noise_factor)
+    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, add_noise, noise_factor)
 
     c3_mappings = vcat(1:old_c3_count, c3_extra_mappings)
     cd3_mappings = vcat(1:old_cd3_count, cd3_extra_mappings) .+ old_c3_count
@@ -297,7 +297,7 @@ function wider_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio, add_noise::
 
     # Set the extra weights
     for i in 1:new_channel_count
-        new_w_first[:, :, i, :] = w_first[:, :, total_mappings[i], :] .+ (add_noise ? randn()*0.01 : 0)
+        new_w_first[:, :, i, :] = w_first[:, :, total_mappings[i], :] .+ (add_noise ? randn()*noise_factor : 0)
     end
     next.w = Param(atype()(cat(new_w_first, w_last, dims=3)))
 end
