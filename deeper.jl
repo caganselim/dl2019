@@ -60,6 +60,7 @@ function deeper_conv(layers, layer_index, dtrn=nothing)
         deeper_layer.bn_params = vcat(reshape(gamma, size(gamma, 3)), reshape(beta, size(beta, 3)))
     end
     insert!(layers, layer_index+1, deeper_layer)
+    return deeper_layer
 end
 
 """
@@ -67,45 +68,67 @@ Net2WiderDeeperNet method for Inception modules.
 Creates new convolutional layers to deepen the module.
 Function is preserved during the deepening.
 """
-function deeper_inception(layers, layer_index, dtrn=nothing)
+function deeper_inception(layers, layer_index, dtrn, deepening_factor=2)
     inc_layer = layers[layer_index]
     if !(inc_layer isa InceptionA) && !(inc_layer isa InceptionB)
         print("Layer is not an Inception module!")
+        return
     end
 
     if inc_layer isa InceptionA
-        
-    else
+        deeper_layer = InceptionADeeper(
+            inc_layer.c1_before_3, inc_layer.c1_before_d3, inc_layer.c1_after_pool,
+            inc_layer.c1_alone,
+            [inc_layer.c3],
+            [inc_layer.cd3_1, inc_layer.cd3_2],
+            inc_layer.pool_mode
+        )
 
-        # Forward computation to set the new bn moments and params correctly
-        for (x, y) in dtrn
-            h = x
-            for i in 1:layer_index
-                h = layers[i](h)
-            end
-            ah = convert(Array, h)
-            dims = _reddims(ah)
-            _lazy_init!(deeper_layer.bn_moments, ah)
-
-            mu = mean(ah, dims=dims)
-            # sigma2 = var(h; corrected=false, mean=mu, dims=dims)
-            sigma2 = Statistics._var(ah, false, convert(Array, mu), dims)
-
-            _update_moments!(deeper_layer.bn_moments, mu, sigma2)
+        c3_layers = layers[1:layer_index-1]
+        push!(c3_layers, inc_layer.c1_before_3, inc_layer.c3)
+        new_conv = deeper_conv(c3_layers, layer_index+1, dtrn)
+        for i in 1:deepening_factor
+            push!(deeper_layer.c3s, deepcopy(new_conv))
         end
 
-        deeper_layer.bn_moments.mean = convert(atype(), deeper_layer.bn_moments.mean)
-        deeper_layer.bn_moments.var = convert(atype(), deeper_layer.bn_moments.var)
-        eps = 1e-5
-        gamma = sqrt.(deeper_layer.bn_moments.var .+ eps)
-        beta = deeper_layer.bn_moments.mean
+        cd3_layers = layers[1:layer_index-1]
+        push!(cd3_layers, inc_layer.c1_before_d3, inc_layer.cd3_1, inc_layer.cd3_2)
+        new_conv = deeper_conv(cd3_layers, layer_index+2, dtrn)
+        for i in 1:deepening_factor
+            push!(deeper_layer.cd3s, deepcopy(new_conv))
+        end
 
-        deeper_layer.bn_params = vcat(reshape(gamma, size(gamma, 3)), reshape(beta, size(beta, 3)))
+        layers[layer_index] = deeper_layer
+    else
+        deeper_layer = InceptionBDeeper(
+            inc_layer.c1_before_3, inc_layer.c1_before_d3,
+            [inc_layer.c3],
+            [inc_layer.cd3_1, inc_layer.cd3_2]
+        )
+
+        c3_layers = layers[1:layer_index-1]
+        push!(c3_layers, inc_layer.c1_before_3, inc_layer.c3)
+        new_conv = deeper_conv(c3_layers, layer_index+1, dtrn)
+        new_conv.stride = 1
+        for i in 1:deepening_factor
+            push!(deeper_layer.c3s, deepcopy(new_conv))
+        end
+
+        cd3_layers = layers[1:layer_index-1]
+        push!(cd3_layers, inc_layer.c1_before_d3, inc_layer.cd3_1, inc_layer.cd3_2)
+        new_conv = deeper_conv(cd3_layers, layer_index+2, dtrn)
+        new_conv.stride = 1
+        for i in 1:deepening_factor
+            push!(deeper_layer.cd3s, deepcopy(new_conv))
+        end
+
+        layers[layer_index] = deeper_layer
     end
-    insert!(layers, layer_index+1, deeper_layer)
 end
 
-
+"""
+Tests Net2DeeperNet for convolutions
+"""
 function test_deeper_conv(with_bn=true)
     (xtrn, ytrn), (xtst, ytst) = load_data()
 
@@ -151,4 +174,53 @@ function test_deeper_conv(with_bn=true)
     @show sames/total
     @assert sames/total == 1 "Function is not preserved"
     println("deeper conv test passed")
+end
+
+"""
+Tests Net2DeeperNet for Inception modules
+"""
+function test_deeper_inception()
+    (xtrn, ytrn), (xtst, ytst) = load_data()
+
+    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
+    dtst = minibatch(xtst, ytst, 50, xtype=atype())
+
+    chosen_layer_a = 3
+    chosen_layer_b = 5
+
+    model = create_inception_bn_sm_model(3, 10)
+
+    results, model = train_results(dtrn, dtst, "inception_sm.jld2", model, 5, false, false)
+
+    deeper = deepcopy(model)
+    deeper_inception(deeper.layers, chosen_layer_a, dtrn)
+    deeper_inception(deeper.layers, chosen_layer_b, dtrn)
+
+    @assert (model.layers[chosen_layer_a] isa InceptionA) "Old model is modified"
+    @assert (model.layers[chosen_layer_b] isa InceptionB) "Old model is modified"
+    @assert (deeper.layers[chosen_layer_a] isa InceptionADeeper) "New model is not deepened correctly"
+    @assert (deeper.layers[chosen_layer_b] isa InceptionBDeeper) "New model is not deepened correctly"
+
+    sames = 0
+    total = 0
+    for (x, y) in dtst
+        y_olds = x
+        y_news = x
+
+        for i in 1:chosen_layer_b
+            y_olds = model.layers[i](y_olds)
+            y_news = deeper.layers[i](y_news)
+        end
+
+        differents = abs.(y_olds .- y_news) .< 0.01
+
+        sames_mb = Int(sum(differents))
+
+        sames += sames_mb
+        total += length(y_olds)
+    end
+
+    @show sames/total
+    @assert sames/total == 1 "Function is not preserved"
+    println("deeper inception test passed")
 end

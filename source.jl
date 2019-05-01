@@ -2,11 +2,11 @@ using Statistics
 using Knet: Knet, dir, zeroone, progress, sgd, load, save, gc, progress!, Param,
  KnetArray, gpu, Data, nll, relu, training, dropout, minibatch, param, param0,
  conv4, pool, mat, zeroone, sgd, adam, rmsprop, adagrad, sigm, softmax, tanh,
-  batchnorm, bnparams, bnmoments, BNMoments, _update_moments!, _lazy_init!
+  batchnorm, bnparams, bnmoments, BNMoments, _update_moments!, _lazy_init!,
   accuracy, xavier
 using AutoGrad
 using Base.Iterators
-using Plots; default(fmt=:png,ls=:auto)
+using DelimitedFiles
 # using Profile
 # using ProfileView
 
@@ -24,7 +24,7 @@ let at = nothing
 end
 
 "Take every nth element in an iterator"
-take_every(n,itr) = (x for (i,x) in enumerate(itr) if i % n == 1)
+take_every(n,itr) = (x for (i,x) in enumerate(itr) if i % n == 0)
 
 """
 Trains a model, tests it every epoch on training and testing data.
@@ -32,15 +32,17 @@ Saves results to a file and can load them back. Returns the results.
 """
 function train_results(dtrn, dtst, file, model, epochs=100, from_scratch=true, cont_from_save=false; o...)
     if from_scratch
+        r_first = [model(dtrn), model(dtst), accuracy(model, dtrn), accuracy(model, dtst)]
         r = ((model(dtrn), model(dtst), accuracy(model, dtrn), accuracy(model, dtst))
              for x in take_every(length(dtrn), progress(adam(model, repeat(dtrn,epochs)))))
         r = reshape(collect(Float32,flatten(r)),(4,:))
+        r = hcat(r_first, r)
         Knet.save(file, "results", r, "model", model)
         Knet.gc() # To save gpu memory
     else
         r, model = Knet.load(file, "results", "model")
         if cont_from_save
-            # todo: continue training doesn't work for some reason
+            # todo: continue training may not work for some reason
             new_r = ((model(dtrn), model(dtst), accuracy(model, dtrn), accuracy(model, dtst))
                  for x in take_every(length(dtrn), progress(adam(model, repeat(dtrn,epochs)))))
             new_r = reshape(collect(Float32,flatten(new_r)),(4,:))
@@ -69,44 +71,136 @@ function load_data()
     return (xtrn, ytrn), (xtst, ytst)
 end
 
+"""
+Net2WiderNet experiment
+-----------------------
+Each Inception module in a smaller Inception network is widened by a factor of
+sqrt(0.3) using Net2WiderNet and the baseline method random padding.
+"""
+function wider_experiment(dtrn, dtst)
+    teacher = create_inception_bn_sm_model(3, 10)
+    results, teacher = train_results(dtrn, dtst, "inception_sm.jld2", teacher, 5, false, true)
+    println("Teacher results: ", results)
+    writedlm("res/wider_res_teacher.txt", results)
+
+    growth_ratio = 1.0/sqrt(0.3)
+
+    wider = deepcopy(teacher)
+    wider_inceptionA(wider.layers[3], wider.layers[4], growth_ratio)
+    wider_inceptionA(wider.layers[4], wider.layers[5], wider.layers[7], growth_ratio)
+    wider_inceptionB(wider.layers[5], wider.layers[7], growth_ratio)
+
+    padded = teacher
+    random_pad_inceptionA(padded.layers[3], padded.layers[4], growth_ratio)
+    random_pad_inceptionA(padded.layers[4], padded.layers[5], padded.layers[7], growth_ratio)
+    random_pad_inceptionB(padded.layers[5], padded.layers[7], growth_ratio)
+
+    Knet.gc()
+
+    results, wider = train_results(dtrn, dtst, "inception_sm_wider.jld2", wider, 5, true)
+    println("Wider results: ", results)
+    writedlm("res/wider_res_wider.txt", results)
+
+    results, padded = train_results(dtrn, dtst, "inception_sm_padded.jld2", padded, 5, true)
+    println("Padded results: ", results)
+    writedlm("res/wider_res_padded.txt", results)
+end
+
+"""
+Net2DeeperNet experiment
+-----------------------
+Each Inception module in a smaller Inception network is deepened by 2 layers
+using Net2DeeperNet and the baseline method random initialization.
+"""
+function deeper_experiment(dtrn, dtst)
+    teacher = create_inception_bn_sm_model(3, 10)
+    results, teacher = train_results(dtrn, dtst, "inception_sm.jld2", teacher, 5, false)
+    println("Teacher results: ", results)
+    writedlm("res/deeper_res_teacher.txt", results)
+
+    deeper = deepcopy(teacher)
+    deeper_inception(deeper.layers, 3, dtrn)
+    deeper_inception(deeper.layers, 4, dtrn)
+    deeper_inception(deeper.layers, 5, dtrn)
+
+    rand_deeper = create_inception_bn_sm_model(3, 10, true)
+
+    results, deeper = train_results(dtrn, dtst, "inception_sm_deeper.jld2", deeper, 5, true)
+    println("Deeper results: ", results)
+    writedlm("res/deeper_res_deeper.txt", results)
+
+    results, rand = train_results(dtrn, dtst, "inception_sm_rand_deeper.jld2", rand_deeper, 5, true)
+    println("Rand Deeper results: ", results)
+    writedlm("res/deeper_res_rand.txt", results)
+end
+
+"""
+Exploring design space experiment
+---------------------------------
+The design space is explored by using Net2WiderNet with a factor of sqrt(2) and
+Net2DeeperNet with 4 layers per module layer.
+"""
+function explore_experiment(dtrn, dtst)
+    teacher = create_inception_bn_sm_model(3, 10)
+    results, teacher = train_results(dtrn, dtst, "inception_sm.jld2", teacher, 5, false)
+    println("Teacher results: ", results)
+    writedlm("res/explore_res_teacher.txt", results)
+    
+    widening_factor = sqrt(2.0)
+    wider = deepcopy(teacher)
+    wider_inceptionA(wider.layers[3], wider.layers[4], widening_factor)
+    wider_inceptionA(wider.layers[4], wider.layers[5], wider.layers[7], widening_factor)
+    wider_inceptionB(wider.layers[5], wider.layers[7], widening_factor)
+
+    deepening_factor = 4
+    deeper = deepcopy(teacher)
+    deeper_inception(deeper.layers, 3, dtrn, deepening_factor)
+    deeper_inception(deeper.layers, 4, dtrn, deepening_factor)
+    deeper_inception(deeper.layers, 5, dtrn, deepening_factor)
+
+    results, wider = train_results(dtrn, dtst, "inception_sm_exp_wider.jld2", wider, 5, true)
+    println("Wider results: ", results)
+    writedlm("res/explore_res_wider.txt", results)
+
+    results, deeper = train_results(dtrn, dtst, "inception_sm_exp_deeper.jld2", deeper, 5, true)
+    println("Deeper results: ", results)
+    writedlm("res/explore_res_deeper.txt", results)
+
+    # New try with both widening and deepening
+    bigger = deepcopy(teacher)
+    widening_factor = 1/sqrt(0.3)
+    wider_inceptionA(bigger.layers[3], bigger.layers[4], widening_factor)
+    wider_inceptionA(bigger.layers[4], bigger.layers[5], bigger.layers[7], widening_factor)
+    wider_inceptionB(bigger.layers[5], bigger.layers[7], widening_factor)
+    deeper_inception(bigger.layers, 3, dtrn, 2)
+    deeper_inception(bigger.layers, 4, dtrn, 2)
+    deeper_inception(bigger.layers, 5, dtrn, 2)
+
+    results, bigger = train_results(dtrn, dtst, "inception_sm_exp_bigger.jld2", bigger, 5, true)
+    println("Bigger results: ", results)
+    writedlm("res/explore_res_bigger.txt", results)
+end
+
 function main()
-    # (xtrn, ytrn), (xtst, ytst) = load_data()
-    #
-    # dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
-    # dtst = minibatch(xtst, ytst, 50, xtype=atype())
-    #
-    # teacher = create_inception_bn_sm_narrow_model(3, 10)
-    # results, teacher_trained = train_results(dtrn, dtst, "inception_sm_narrower.jld2", teacher, 3, false, false)
-    # plot([results[1,:], results[2,:]], labels=["trn teacher" "tst teacher"], xlabel="Epochs", ylabel="Loss")
-    # println("Teacher results: ", results)
-    #
-    # growth_ratio = 1.0/sqrt(0.3)
+    (xtrn, ytrn), (xtst, ytst) = load_data()
 
-    # wider = deepcopy(teacher)
-    # wider_inceptionA(wider.layers[3], wider.layers[4], growth_ratio)
-    # wider_inceptionA(wider.layers[4], wider.layers[5], wider.layers[7], growth_ratio)
-    # wider_inceptionB(wider.layers[5], wider.layers[7], growth_ratio)
-    #
-    # padded = deepcopy(teacher)
-    # random_pad_inceptionA(padded.layers[3], padded.layers[4], growth_ratio)
-    # random_pad_inceptionA(padded.layers[4], padded.layers[5], padded.layers[7], growth_ratio)
-    # random_pad_inceptionB(padded.layers[5], padded.layers[7], growth_ratio)
-    #
-    # results, wider_trained = train_results(dtrn, dtst, "inception_sm_wider2.jld2", wider, 5, true)
-    # plot([results[1,:], results[2,:]], labels=["trn wider" "tst wider"], xlabel="Epochs", ylabel="Loss")
-    # println("Wider results: ", results)
-    #
-    # results, padded_trained = train_results(dtrn, dtst, "inception_sm_padded2.jld2", padded, 5, true)
-    # plot([results[1,:], results[2,:]], labels=["trn padded" "tst padded"], xlabel="Epochs", ylabel="Loss")
-    # println("Padded results: ", results)
+    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
+    dtst = minibatch(xtst, ytst, 50, xtype=atype())
 
-    m = create_cnn_model(3, 10, false)
-    deeper_conv(m.layers[4])
+    # wider_experiment(dtrn, dtst)
+    # deeper_experiment(dtrn, dtst)
+    explore_experiment(dtrn, dtst)
+end
+
+function perform_tests()
+    test_wider_mlp()
+    test_wider_conv()
+    test_wider_inception()
+    test_random_pad_inception()
+    test_deeper_conv()
+    test_deeper_inception()
 end
 
 Knet.gc()
-test_deeper_conv()
-# test_random_pad_inception()
-# test_wider_inception()
-# test_wider_conv()
-# test_wider_mlp()
+main()
+# perform_tests()
