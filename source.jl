@@ -235,7 +235,7 @@ function noise_experiment(dtrn, dtst)
     writedlm("res/noise_res_3.txt", results)
 end
 
-function main()
+function run_experiments()
     (xtrn, ytrn), (xtst, ytst) = load_data()
 
     dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
@@ -249,12 +249,12 @@ end
 
 function perform_tests()
     test_wider_mlp()
-    # test_wider_conv()
-    # test_wider_inception()
-    # test_random_pad_inception()
-    # test_deeper_conv()
-    # test_deeper_inception()
+    test_wider_conv()
+    test_wider_inception()
+    test_random_pad_inception()
+    test_deeper_conv()
+    test_deeper_inception()
 end
 
-# main()
 perform_tests()
+run_experiments()
