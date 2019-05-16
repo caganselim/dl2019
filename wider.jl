@@ -1,44 +1,22 @@
 """
-Baseline method for Net2WiderNet.
-Grows one of the layers of the model to a new one with a larger size.
-The old units are copied as is, new units are initialized randomly.
-"""
-function random_pad_mlp(model, changing_layer, new_unit_count)
-    old_unit_count = size(model.layers[changing_layer].w, 1)
-    if old_unit_count >= new_unit_count
-        println("New unit count must be greater than old unit count")
-        return nothing
-    end
+    wider_mlp(layer, next_layer, new_unit_count, noise_factor=0.05)
 
-    padding_count = new_unit_count - old_unit_count
-
-    padding_1 = param(padding_count, size(model.layers[changing_layer].w, 2))
-    padding_2 = param(size(model.layers[changing_layer+1].w, 1), padding_count)
-    padding_b = param0(padding_count)
-
-    new_model = deepcopy(model)
-    new_model.layers[changing_layer].w = Param(vcat(new_model.layers[changing_layer].w, padding_1))
-    new_model.layers[changing_layer].b = Param(vcat(new_model.layers[changing_layer].b, padding_b))
-    new_model.layers[changing_layer+1].w = Param(hcat(new_model.layers[changing_layer+1].w, padding_2))
-
-    return new_model
-end
-
-"""
 Net2WiderNet method for MLPs.
 Grows one of the layers of the model to a new one with more hidden units.
 Function is preserved during the widening.
+
+`layer` should be the `Dense` layer that you wish to widen
+`next_layer` should be the `Dense` layer that comes right after `layer`
+`new_unit_count` is how many units you wish the new layer to have
+`noise_factor` sets how much Gaussian noise to add to the student's weights.
+If you want no noise, set `noise_factor` to 0.
 """
-function wider_mlp(model, changing_layer, new_unit_count, add_noise=true)
-    old_unit_count = size(model.layers[changing_layer].w, 1)
+function wider_mlp(layer, next_layer, new_unit_count, noise_factor=0.05)
+    old_unit_count = size(layer.w, 1)
     if old_unit_count >= new_unit_count
         println("New unit count must be greater than old unit count")
         return nothing
     end
-
-    new_model = deepcopy(model)
-    layer = new_model.layers[changing_layer]
-    next_layer = new_model.layers[changing_layer + 1]
 
     # Initialize number of extra units, extra arrays, random mapping, number of copies
     extra_count = new_unit_count - old_unit_count
@@ -56,8 +34,8 @@ function wider_mlp(model, changing_layer, new_unit_count, add_noise=true)
 
     # Set the extra weights
     for i in 1:extra_count
-        extra_w[i, :] = layer.w[extra_mapping[i], :]
-        extra_next_w[:, i] = next_layer.w[:, extra_mapping[i]]
+        extra_w[i, :] = layer.w[extra_mapping[i], :] .+ (noise_factor != 0 ? randn()*noise_factor : 0)
+        extra_next_w[:, i] = next_layer.w[:, extra_mapping[i]] .+ (noise_factor != 0 ? randn()*noise_factor : 0)
         extra_b[i] = layer.b[extra_mapping[i]]
     end
 
@@ -65,15 +43,23 @@ function wider_mlp(model, changing_layer, new_unit_count, add_noise=true)
     layer.w = Param(vcat(layer.w, extra_w))
     layer.b = Param(vcat(layer.b, extra_b))
     next_layer.w = Param(hcat(next_layer.w, extra_next_w))
-    return new_model
+    return extra_mapping
 end
 
 """
+    wider_conv(layer, next_layer, new_channel_count, noise_factor=0.05)
+
 Net2WiderNet method for Convs.
 Grows one of the layers of the model to a new one with more filter channels.
 Function is preserved during the widening.
+
+`layer` should be the `Conv` or `ConvBN` layer that you wish to widen
+`next_layer` should be the `Conv` or `ConvBN` layer that comes right after `layer`
+`new_channel_count` is how many filter channels you wish the new layer to have
+`noise_factor` sets how much Gaussian noise to add to the student's weights.
+If you want no noise, set `noise_factor` to 0.
 """
-function wider_conv(layer, next_layer, new_channel_count, add_noise=true, noise_factor=0.01)
+function wider_conv(layer, next_layer, new_channel_count, noise_factor=0.05)
     old_channel_count = size(layer.w, 4)
     if old_channel_count >= new_channel_count
         println("New channel count must be greater than old channel count")
@@ -106,9 +92,9 @@ function wider_conv(layer, next_layer, new_channel_count, add_noise=true, noise_
     array_next_layer_w = next_layer != nothing ? convert(Array{Float32}, next_layer.w) : nothing
     # Set the extra weights
     for i in 1:extra_count
-        extra_w[:, :, :, i] = array_layer_w[:, :, :, extra_mapping[i]] .+ (add_noise ? randn()*noise_factor : 0)
+        extra_w[:, :, :, i] = array_layer_w[:, :, :, extra_mapping[i]] .+ (noise_factor != 0 ? randn()*noise_factor : 0)
         if next_layer != nothing
-            extra_next_w[:, :, i, :] = array_next_layer_w[:, :, extra_mapping[i], :] .+ (add_noise ? randn()*noise_factor : 0)
+            extra_next_w[:, :, i, :] = array_next_layer_w[:, :, extra_mapping[i], :] .+ (noise_factor != 0 ? randn()*noise_factor : 0)
         end
         extra_b[1, 1, i, 1] = layer.b[1, 1, extra_mapping[i], 1]
         if layer.bn_params != nothing
@@ -145,11 +131,24 @@ function wider_conv(layer, next_layer, new_channel_count, add_noise=true, noise_
     return extra_mapping
 end
 
-function wider_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio, add_noise::Bool=true, noise_factor=0.01)
+"""
+    wider_inceptionA(inc, next, grow_ratio, noise_factor=0.05)
+
+Net2WiderNet method for InceptionA modules where the next layer is another InceptionA.
+Widens all of the convolutional layers in the module by the given ratio.
+Function is preserved during the widening.
+
+`inc` should be the `InceptionA` layer that you wish to widen
+`next` should be the `InceptionA` layer that comes right after `inc`
+`grow_ratio` is the multiplier used for the widening, e.g. 1.5 will grow all `Conv`s to 1.5 times their width.
+`noise_factor` sets how much Gaussian noise to add to the student's weights.
+If you want no noise, set `noise_factor` to 0.
+"""
+function wider_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio, noise_factor=0.05)
     # Grow inside layers normally
-    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), add_noise, noise_factor)
-    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), add_noise, noise_factor)
-    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), add_noise, noise_factor)
+    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), noise_factor)
+    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), noise_factor)
+    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), noise_factor)
 
     old_c1_count = size(inc.c1_alone.w, 4)
     old_c3_count = size(inc.c3.w, 4)
@@ -161,10 +160,10 @@ function wider_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio, add_noi
     new_cd3_count = Int64(round(old_cd3_count*(grow_ratio)))
     new_c1_ap_count = Int64(round(old_c1_ap_count*(grow_ratio)))
 
-    c1_extra_mappings = wider_conv(inc.c1_alone, nothing, new_c1_count, add_noise, noise_factor)
-    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, add_noise, noise_factor)
-    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, add_noise, noise_factor)
-    c1_ap_extra_mappings = wider_conv(inc.c1_after_pool, nothing, new_c1_ap_count, add_noise, noise_factor)
+    c1_extra_mappings = wider_conv(inc.c1_alone, nothing, new_c1_count, noise_factor)
+    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, noise_factor)
+    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, noise_factor)
+    c1_ap_extra_mappings = wider_conv(inc.c1_after_pool, nothing, new_c1_ap_count, noise_factor)
 
     c1_mappings = vcat(1:old_c1_count, c1_extra_mappings)
     c3_mappings = vcat(1:old_c3_count, c3_extra_mappings) .+ old_c1_count
@@ -189,16 +188,31 @@ function wider_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio, add_noi
         array_w = convert(Array{Float32}, c.w)
         # Set the extra weights
         for i in 1:new_channel_count
-            new_w[:, :, i, :] = array_w[:, :, total_mappings[i], :] .+ (add_noise ? randn()*noise_factor : 0)
+            new_w[:, :, i, :] = array_w[:, :, total_mappings[i], :] .+ (noise_factor != 0 ? randn()*noise_factor : 0)
         end
         c.w = Param(atype()(new_w))
     end
 end
 
-function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, grow_ratio, add_noise::Bool=true, noise_factor=0.01)
-    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), add_noise, noise_factor)
-    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), add_noise, noise_factor)
-    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), add_noise, noise_factor)
+"""
+    wider_inceptionA(inc, next, after_b, grow_ratio, noise_factor=0.05)
+
+Net2WiderNet method for InceptionA modules where the next layer is an InceptionB.
+Widens all of the convolutional layers in the module by the given ratio.
+Function is preserved during the widening.
+This function requires a third layer to be given, as it will also be affected by the widening.
+
+`inc` should be the `InceptionA` layer that you wish to widen
+`next` should be the `InceptionB` layer that comes right after `inc`
+`after_b` should be the `ConvBN` layer that comes right after `next`
+`grow_ratio` is the multiplier used for the widening, e.g. 1.5 will grow all `Conv`s to 1.5 times their width.
+`noise_factor` sets how much Gaussian noise to add to the student's weights.
+If you want no noise, set `noise_factor` to 0.
+"""
+function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, grow_ratio, noise_factor=0.05)
+    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), noise_factor)
+    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), noise_factor)
+    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), noise_factor)
 
     old_c1_count = size(inc.c1_alone.w, 4)
     old_c3_count = size(inc.c3.w, 4)
@@ -210,10 +224,10 @@ function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, gr
     new_cd3_count = Int64(round(old_cd3_count*(grow_ratio)))
     new_c1_ap_count = Int64(round(old_c1_ap_count*(grow_ratio)))
 
-    c1_extra_mappings = wider_conv(inc.c1_alone, nothing, new_c1_count, add_noise, noise_factor)
-    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, add_noise, noise_factor)
-    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, add_noise, noise_factor)
-    c1_ap_extra_mappings = wider_conv(inc.c1_after_pool, nothing, new_c1_ap_count, add_noise, noise_factor)
+    c1_extra_mappings = wider_conv(inc.c1_alone, nothing, new_c1_count, noise_factor)
+    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, noise_factor)
+    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, noise_factor)
+    c1_ap_extra_mappings = wider_conv(inc.c1_after_pool, nothing, new_c1_ap_count, noise_factor)
 
     c1_mappings = vcat(1:old_c1_count, c1_extra_mappings)
     c3_mappings = vcat(1:old_c3_count, c3_extra_mappings) .+ old_c1_count
@@ -238,7 +252,7 @@ function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, gr
         array_w = convert(Array{Float32}, c.w)
         # Set the extra weights
         for i in 1:new_channel_count
-            new_w[:, :, i, :] = array_w[:, :, total_mappings[i], :] .+ (add_noise ? randn()*noise_factor : 0)
+            new_w[:, :, i, :] = array_w[:, :, total_mappings[i], :] .+ (noise_factor != 0 ? randn()*noise_factor : 0)
         end
         c.w = Param(atype()(new_w))
     end
@@ -259,11 +273,24 @@ function wider_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, gr
     after_b.w = Param(atype()(cat(w_first, new_w_last, dims=3)))
 end
 
-function wider_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio, add_noise::Bool=true, noise_factor=0.01)
+"""
+    wider_inceptionB(inc, next, grow_ratio, noise_factor=0.05)
+
+Net2WiderNet method for InceptionB modules where the next layer is a convolution with batchnorm layer.
+Widens all of the convolutional layers in the module by the given ratio.
+Function is preserved during the widening.
+
+`inc` should be the `InceptionB` layer that you wish to widen
+`next` should be the `ConvBN` layer that comes right after `inc`
+`grow_ratio` is the multiplier used for the widening, e.g. 1.5 will grow all `Conv`s to 1.5 times their width.
+`noise_factor` sets how much Gaussian noise to add to the student's weights.
+If you want no noise, set `noise_factor` to 0.
+"""
+function wider_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio, noise_factor=0.05)
     # Grow inside layers normally
-    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), add_noise, noise_factor)
-    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), add_noise, noise_factor)
-    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), add_noise, noise_factor)
+    wider_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))), noise_factor)
+    wider_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))), noise_factor)
+    wider_conv(inc.cd3_1, inc.cd3_2, Int64(round(size(inc.cd3_1.w, 4)*(grow_ratio))), noise_factor)
 
     old_c3_count = size(inc.c3.w, 4)
     old_cd3_count = size(inc.cd3_2.w, 4)
@@ -271,8 +298,8 @@ function wider_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio, add_noise::
     new_c3_count = Int64(round(old_c3_count*(grow_ratio)))
     new_cd3_count = Int64(round(old_cd3_count*(grow_ratio)))
 
-    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, add_noise, noise_factor)
-    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, add_noise, noise_factor)
+    c3_extra_mappings = wider_conv(inc.c3, nothing, new_c3_count, noise_factor)
+    cd3_extra_mappings = wider_conv(inc.cd3_2, nothing, new_cd3_count, noise_factor)
 
     c3_mappings = vcat(1:old_c3_count, c3_extra_mappings)
     cd3_mappings = vcat(1:old_cd3_count, cd3_extra_mappings) .+ old_c3_count
@@ -297,193 +324,57 @@ function wider_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio, add_noise::
 
     # Set the extra weights
     for i in 1:new_channel_count
-        new_w_first[:, :, i, :] = w_first[:, :, total_mappings[i], :] .+ (add_noise ? randn()*noise_factor : 0)
+        new_w_first[:, :, i, :] = w_first[:, :, total_mappings[i], :] .+ (noise_factor != 0 ? randn()*noise_factor : 0)
     end
     next.w = Param(atype()(cat(new_w_first, w_last, dims=3)))
 end
 
-function test_wider_inception()
-    (xtrn, ytrn), (xtst, ytst) = load_data()
+#-------------------------------------------------------------------------------
+# ---------------------------- RANDOM PADDING BEGINS ---------------------------
+#-------------------------------------------------------------------------------
 
-    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
-    dtst = minibatch(xtst, ytst, 50, xtype=atype())
+"""
+    random_pad_mlp(layer, next_layer, new_unit_count)
 
-    model = create_inception_bn_sm_model(3, 10)
+Baseline method for Net2WiderNet for MLP layers.
+Grows one of the layers of the model to a new one with a larger size.
+The old units are copied as is, new units are initialized randomly.
 
-    results, model = train_results(dtrn, dtst, "inception_smaller.jld2", model, 50, false, false)
-    wider = deepcopy(model)
-
-    chosen_layer = 3
-    growth_ratio = 1.25
-
-    old_l = model.layers[chosen_layer]
-    old_n = model.layers[chosen_layer+1]
-
-    new_l = wider.layers[chosen_layer]
-    new_n = wider.layers[chosen_layer+1]
-
-    # instead of checking old model's layers manually, record results beforehand
-    y_oldss = []
-    for (x, y) in dtst
-        push!(y_oldss, model(x))
+`layer` should be the `Dense` layer that you wish to widen
+`next_layer` should be the `Dense` layer that comes right after `layer`
+`new_unit_count` is how many units you wish the new layer to have
+"""
+function random_pad_mlp(layer, next_layer, new_unit_count)
+    old_unit_count = size(layer.w, 1)
+    if old_unit_count >= new_unit_count
+        println("New unit count must be greater than old unit count")
+        return nothing
     end
 
-    wider_inceptionA(new_l, new_n, growth_ratio, false)
+    padding_count = new_unit_count - old_unit_count
 
-    @assert (size(new_l.c1_alone.w, 4) == Int64(round(size(old_l.c1_alone.w, 4) * (1 + growth_ratio))) &&
-             size(new_l.c1_alone.b, 3) == Int64(round(size(old_l.c1_alone.b, 3) * (1 + growth_ratio))) &&
-             size(new_l.c3.w, 4) == Int64(round(size(old_l.c3.w, 4) * (1 + growth_ratio))) &&
-             size(new_l.c3.b, 3) == Int64(round(size(old_l.c3.b, 3) * (1 + growth_ratio))) &&
-             size(new_l.cd3_2.w, 4) == Int64(round(size(old_l.cd3_2.w, 4) * (1 + growth_ratio))) &&
-             size(new_l.cd3_2.b, 3) == Int64(round(size(old_l.cd3_2.b, 3) * (1 + growth_ratio))) &&
-             size(new_l.c1_after_pool.w, 4) == Int64(round(size(old_l.c1_after_pool.w, 4) * (1 + growth_ratio))) &&
-             size(new_l.c1_after_pool.b, 3) == Int64(round(size(old_l.c1_after_pool.b, 3) * (1 + growth_ratio))) &&
+    padding_1 = param(padding_count, size(layer.w, 2))
+    padding_2 = param(size(next_layer.w, 1), padding_count)
+    padding_b = param0(padding_count)
 
-             size(new_n.c1_alone.w, 3) == Int64(round(size(old_n.c1_alone.w, 3) * (1 + growth_ratio))) &&
-             size(new_n.c1_before_3.w, 3) == Int64(round(size(old_n.c1_before_3.w, 3) * (1 + growth_ratio))) &&
-             size(new_n.c1_before_d3.w, 3) == Int64(round(size(old_n.c1_before_d3.w, 3) * (1 + growth_ratio))) &&
-             size(new_n.c1_after_pool.w, 3) == Int64(round(size(old_n.c1_after_pool.w, 3) * (1 + growth_ratio)))
-    ) "New model is not widened correctly"
+    layer.w = Param(vcat(layer.w, padding_1))
+    layer.b = Param(vcat(layer.b, padding_b))
+    next_layer.w = Param(hcat(next_layer.w, padding_2))
 
-    # Widening the next inceptionA
-    wider_inceptionA(wider.layers[chosen_layer+1], wider.layers[chosen_layer+2], wider.layers[chosen_layer+4], growth_ratio, false)
-    # Widening the next inceptionB
-    wider_inceptionB(wider.layers[chosen_layer+2], wider.layers[chosen_layer+4], growth_ratio, false)
-
-    sames = 0
-    total = 0
-    for (i, (x, y)) in enumerate(dtst)
-        y_olds = y_oldss[i]
-        y_news = wider(x)
-
-        sames += sum(y_olds .- y_news .< 0.01)
-        total += length(y_olds)
-    end
-
-    @assert sames/total == 1 "Function is not preserved"
-    println("wider inceptionA test passed")
+    return new_model
 end
 
-function test_wider_conv()
-    (xtrn, ytrn), (xtst, ytst) = load_data()
+"""
+    random_pad_conv(layer, next_layer, new_channel_count)
 
-    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
-    dtst = minibatch(xtst, ytst, 50, xtype=atype())
+Baseline method for Net2WiderNet for Conv layers.
+Grows one of the layers of the model to a new one with a larger size.
+The old units are copied as is, new units are initialized randomly.
 
-    narrow = 64
-    wide = 72
-    chosen_layer = 4
-
-    cnn_model = create_cnn_model(3, 10, true)
-    cnn_results, cnn_model = train_results(dtrn, dtst, "cnn.jld2", cnn_model, 5, false)
-    cnn_wider = deepcopy(cnn_model)
-    wider_conv(cnn_wider.layers[chosen_layer], cnn_wider.layers[chosen_layer+1], wide, false)
-
-    @assert (size(cnn_model.layers[chosen_layer].w, 4) == narrow &&
-            size(cnn_model.layers[chosen_layer].b, 3) == narrow &&
-            size(cnn_model.layers[chosen_layer+1].w, 3) == narrow) "Old model is modified"
-
-    @assert (size(cnn_wider.layers[chosen_layer].w, 4) == wide &&
-            size(cnn_wider.layers[chosen_layer].b, 3) == wide &&
-            size(cnn_wider.layers[chosen_layer+1].w, 3) == wide) "New model is not widened correctly"
-
-    sames = 0
-    total = 0
-    for (x, y) in dtst
-        y_olds = cnn_model(x)
-        y_news = cnn_wider(x)
-
-        sames += sum(y_olds .- y_news .< 0.01)
-        total += length(y_olds)
-    end
-
-    @assert sames/total == 1 "Function is not preserved"
-    println("wider conv test passed")
-end
-
-function test_wider_mlp()
-    (xtrn, ytrn), (xtst, ytst) = load_data()
-
-    # Need to reshape it to 2 dims for MLP
-    xtrn = reshape(xtrn, (32*32*3, :))
-    xtst = reshape(xtst, (32*32*3, :))
-
-    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
-    dtst = minibatch(xtst, ytst, 50, xtype=atype())
-
-    narrow = 16
-    wide = 20
-    chosen_layer = 1
-
-    mlp_model = create_mlp_model(32*32*3, 10, narrow, 16)
-    mlp_results, mlp_model = train_results(dtrn, dtst, "mlp.jld2", mlp_model, 100, true)
-    mlp_wider = wider_mlp(mlp_model, chosen_layer, wide, false)
-
-    @assert (size(mlp_model.layers[chosen_layer].w, 1) == narrow &&
-            size(mlp_model.layers[chosen_layer].b, 1) == narrow &&
-            size(mlp_model.layers[chosen_layer+1].w, 2) == narrow) "Old model is modified"
-
-    @assert (size(mlp_wider.layers[chosen_layer].w, 1) == wide &&
-            size(mlp_wider.layers[chosen_layer].b, 1) == wide &&
-            size(mlp_wider.layers[chosen_layer+1].w, 2) == wide) "New model is not widened correctly"
-
-    sames = 0
-    total = 0
-    for (x, y) in dtst
-        y_olds = mlp_model(x)
-        y_news = mlp_wider(x)
-
-        sames += sum(y_olds .- y_news .< 0.01)
-        total += length(y_olds)
-    end
-    @assert sames/total == 1 "Function is not preserved"
-    println("wider mlp test passed")
-end
-
-function test_random_pad_inception()
-    (xtrn, ytrn), (xtst, ytst) = load_data()
-
-    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
-    dtst = minibatch(xtst, ytst, 50, xtype=atype())
-
-    model = create_inception_bn_sm_model(3, 10)
-
-    results, model = train_results(dtrn, dtst, "inception_smaller.jld2", model, 50, false, false)
-    wider = deepcopy(model)
-
-    chosen_layer = 3
-    growth_ratio = 1.25
-
-    old_l = model.layers[chosen_layer]
-    old_n = model.layers[chosen_layer+1]
-
-    new_l = wider.layers[chosen_layer]
-    new_n = wider.layers[chosen_layer+1]
-
-    random_pad_inceptionA(new_l, new_n, growth_ratio)
-
-    @assert (size(new_l.c1_alone.w, 4) == Int64(round(size(old_l.c1_alone.w, 4) * (1 + growth_ratio))) &&
-             size(new_l.c1_alone.b, 3) == Int64(round(size(old_l.c1_alone.b, 3) * (1 + growth_ratio))) &&
-             size(new_l.c3.w, 4) == Int64(round(size(old_l.c3.w, 4) * (1 + growth_ratio))) &&
-             size(new_l.c3.b, 3) == Int64(round(size(old_l.c3.b, 3) * (1 + growth_ratio))) &&
-             size(new_l.cd3_2.w, 4) == Int64(round(size(old_l.cd3_2.w, 4) * (1 + growth_ratio))) &&
-             size(new_l.cd3_2.b, 3) == Int64(round(size(old_l.cd3_2.b, 3) * (1 + growth_ratio))) &&
-             size(new_l.c1_after_pool.w, 4) == Int64(round(size(old_l.c1_after_pool.w, 4) * (1 + growth_ratio))) &&
-             size(new_l.c1_after_pool.b, 3) == Int64(round(size(old_l.c1_after_pool.b, 3) * (1 + growth_ratio))) &&
-
-             size(new_n.c1_alone.w, 3) == Int64(round(size(old_n.c1_alone.w, 3) * (1 + growth_ratio))) &&
-             size(new_n.c1_before_3.w, 3) == Int64(round(size(old_n.c1_before_3.w, 3) * (1 + growth_ratio))) &&
-             size(new_n.c1_before_d3.w, 3) == Int64(round(size(old_n.c1_before_d3.w, 3) * (1 + growth_ratio))) &&
-             size(new_n.c1_after_pool.w, 3) == Int64(round(size(old_n.c1_after_pool.w, 3) * (1 + growth_ratio)))
-    ) "New model is not widened correctly"
-
-    random_pad_inceptionA(wider.layers[chosen_layer+1], wider.layers[chosen_layer+2], wider.layers[chosen_layer+4], growth_ratio)
-    random_pad_inceptionB(wider.layers[chosen_layer+2], wider.layers[chosen_layer+4], growth_ratio)
-    wider(dtst)
-
-    println("random pad inceptionA test passed")
-end
-
+`layer` should be the `Conv` or `ConvBN` layer that you wish to widen
+`next_layer` should be the `Conv` or `ConvBN` layer that comes right after `layer`
+`new_channel_count` is how many filter channels you wish the new layer to have
+"""
 function random_pad_conv(layer, next_layer, new_channel_count)
     old_channel_count = size(layer.w, 4)
     if old_channel_count >= new_channel_count
@@ -530,6 +421,17 @@ function random_pad_conv(layer, next_layer, new_channel_count)
     end
 end
 
+"""
+    random_pad_inceptionA(inc, next, grow_ratio)
+
+Baseline method for Net2WiderNet for InceptionA modules where the next layer is another InceptionA.
+Grows one of the layers of the model to a new one with a larger size.
+The old units are copied as is, new units are initialized randomly.
+
+`inc` should be the `InceptionA` layer that you wish to widen
+`next` should be the `InceptionA` layer that comes right after `inc`
+`grow_ratio` is the multiplier used for the widening, e.g. 1.5 will grow all `Conv`s to 1.5 times their width.
+"""
 function random_pad_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio)
     # Grow inside layers normally
     random_pad_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))))
@@ -574,6 +476,19 @@ function random_pad_inceptionA(inc::InceptionA, next::InceptionA, grow_ratio)
     end
 end
 
+"""
+    random_pad_inceptionA(inc, next, after_b, grow_ratio)
+
+Baseline method for Net2WiderNet for InceptionA modules where the next layer is an InceptionB.
+Grows one of the layers of the model to a new one with a larger size.
+The old units are copied as is, new units are initialized randomly.
+This function requires a third layer to be given, as it will also be affected by the widening.
+
+`inc` should be the `InceptionA` layer that you wish to widen
+`next` should be the `InceptionB` layer that comes right after `inc`
+`after_b` should be the `ConvBN` layer that comes right after `next`
+`grow_ratio` is the multiplier used for the widening, e.g. 1.5 will grow all `Conv`s to 1.5 times their width.
+"""
 function random_pad_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvBN, grow_ratio)
     random_pad_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))))
     random_pad_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))))
@@ -628,6 +543,18 @@ function random_pad_inceptionA(inc::InceptionA, next::InceptionB, after_b::ConvB
 
     after_b.w = Param(atype()(cat(w_first, new_w_last, dims=3)))
 end
+
+"""
+    random_pad_inceptionB(inc, next, grow_ratio)
+
+Baseline method for Net2WiderNet for InceptionB modules where the next layer is aconvolution with batchnorm layer.
+Grows one of the layers of the model to a new one with a larger size.
+The old units are copied as is, new units are initialized randomly.
+
+`inc` should be the `InceptionB` layer that you wish to widen
+`next` should be the `ConvBN` layer that comes right after `inc`
+`grow_ratio` is the multiplier used for the widening, e.g. 1.5 will grow all `Conv`s to 1.5 times their width.
+"""
 function random_pad_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio)
     random_pad_conv(inc.c1_before_3, inc.c3, Int64(round(size(inc.c1_before_3.w, 4)*(grow_ratio))))
     random_pad_conv(inc.c1_before_d3, inc.cd3_1, Int64(round(size(inc.c1_before_d3.w, 4)*(grow_ratio))))
@@ -655,4 +582,203 @@ function random_pad_inceptionB(inc::InceptionB, next::ConvBN, grow_ratio)
     new_w_last[:, :, old_channel_count+1:end, :] = xavier(size(w_last)[1:2]..., new_channel_count-old_channel_count, size(w_last)[4])
 
     next.w = Param(atype()(cat(w_first, new_w_last, dims=3)))
+end
+
+#-------------------------------------------------------------------------------
+#----------------------------- TESTS BEGIN -------------------------------------
+#-------------------------------------------------------------------------------
+
+"""
+Test for checking if wider functions for MLP widen properly and are function preserving
+"""
+function test_wider_mlp()
+    (xtrn, ytrn), (xtst, ytst) = load_data()
+
+    # Need to reshape it to 2 dims for MLP
+    xtrn = reshape(xtrn, (32*32*3, :))
+    xtst = reshape(xtst, (32*32*3, :))
+
+    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
+    dtst = minibatch(xtst, ytst, 50, xtype=atype())
+
+    narrow = 16
+    wide = 20
+    chosen_layer = 1
+
+    mlp_model = create_mlp_model(32*32*3, 10, narrow, 16)
+    mlp_results, mlp_model = train_results(dtrn, dtst, "mlp.jld2", mlp_model, 100, true)
+    mlp_wider = deepcopy(mlp_model)
+    wider_mlp(mlp_wider.layers[chosen_layer], mlp_wider.layers[chosen_layer+1], wide, 0)
+
+    @assert (size(mlp_model.layers[chosen_layer].w, 1) == narrow &&
+            size(mlp_model.layers[chosen_layer].b, 1) == narrow &&
+            size(mlp_model.layers[chosen_layer+1].w, 2) == narrow) "Old model is modified"
+
+    @assert (size(mlp_wider.layers[chosen_layer].w, 1) == wide &&
+            size(mlp_wider.layers[chosen_layer].b, 1) == wide &&
+            size(mlp_wider.layers[chosen_layer+1].w, 2) == wide) "New model is not widened correctly"
+
+    sames = 0
+    total = 0
+    for (x, y) in dtst
+        y_olds = mlp_model(x)
+        y_news = mlp_wider(x)
+
+        sames += sum(y_olds .- y_news .< 0.01)
+        total += length(y_olds)
+    end
+    @assert sames/total == 1 "Function is not preserved"
+    println("wider mlp test passed")
+end
+
+"""
+Test for checking if wider functions for Conv layers widen properly and are function preserving
+"""
+function test_wider_conv()
+    (xtrn, ytrn), (xtst, ytst) = load_data()
+
+    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
+    dtst = minibatch(xtst, ytst, 50, xtype=atype())
+
+    narrow = 64
+    wide = 72
+    chosen_layer = 4
+
+    cnn_model = create_cnn_model(3, 10, true)
+    cnn_results, cnn_model = train_results(dtrn, dtst, "cnn.jld2", cnn_model, 5, false)
+    cnn_wider = deepcopy(cnn_model)
+    wider_conv(cnn_wider.layers[chosen_layer], cnn_wider.layers[chosen_layer+1], wide, 0)
+
+    @assert (size(cnn_model.layers[chosen_layer].w, 4) == narrow &&
+            size(cnn_model.layers[chosen_layer].b, 3) == narrow &&
+            size(cnn_model.layers[chosen_layer+1].w, 3) == narrow) "Old model is modified"
+
+    @assert (size(cnn_wider.layers[chosen_layer].w, 4) == wide &&
+            size(cnn_wider.layers[chosen_layer].b, 3) == wide &&
+            size(cnn_wider.layers[chosen_layer+1].w, 3) == wide) "New model is not widened correctly"
+
+    sames = 0
+    total = 0
+    for (x, y) in dtst
+        y_olds = cnn_model(x)
+        y_news = cnn_wider(x)
+
+        sames += sum(y_olds .- y_news .< 0.01)
+        total += length(y_olds)
+    end
+
+    @assert sames/total == 1 "Function is not preserved"
+    println("wider conv test passed")
+end
+
+"""
+Test for checking if wider functions for Inception modules widen properly and are function preserving
+"""
+function test_wider_inception()
+    (xtrn, ytrn), (xtst, ytst) = load_data()
+
+    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
+    dtst = minibatch(xtst, ytst, 50, xtype=atype())
+
+    model = create_inception_bn_sm_model(3, 10)
+
+    results, model = train_results(dtrn, dtst, "inception_sm.jld2", model, 50, false, false)
+    wider = deepcopy(model)
+
+    chosen_layer = 3
+    growth_ratio = 1.25
+
+    old_l = model.layers[chosen_layer]
+    old_n = model.layers[chosen_layer+1]
+
+    new_l = wider.layers[chosen_layer]
+    new_n = wider.layers[chosen_layer+1]
+
+    # instead of checking old model's layers manually, record results beforehand
+    y_oldss = []
+    for (x, y) in dtst
+        push!(y_oldss, model(x))
+    end
+
+    wider_inceptionA(new_l, new_n, growth_ratio, 0)
+
+    @assert (size(new_l.c1_alone.w, 4) == Int64(round(size(old_l.c1_alone.w, 4) * (1 + growth_ratio))) &&
+             size(new_l.c1_alone.b, 3) == Int64(round(size(old_l.c1_alone.b, 3) * (1 + growth_ratio))) &&
+             size(new_l.c3.w, 4) == Int64(round(size(old_l.c3.w, 4) * (1 + growth_ratio))) &&
+             size(new_l.c3.b, 3) == Int64(round(size(old_l.c3.b, 3) * (1 + growth_ratio))) &&
+             size(new_l.cd3_2.w, 4) == Int64(round(size(old_l.cd3_2.w, 4) * (1 + growth_ratio))) &&
+             size(new_l.cd3_2.b, 3) == Int64(round(size(old_l.cd3_2.b, 3) * (1 + growth_ratio))) &&
+             size(new_l.c1_after_pool.w, 4) == Int64(round(size(old_l.c1_after_pool.w, 4) * (1 + growth_ratio))) &&
+             size(new_l.c1_after_pool.b, 3) == Int64(round(size(old_l.c1_after_pool.b, 3) * (1 + growth_ratio))) &&
+
+             size(new_n.c1_alone.w, 3) == Int64(round(size(old_n.c1_alone.w, 3) * (1 + growth_ratio))) &&
+             size(new_n.c1_before_3.w, 3) == Int64(round(size(old_n.c1_before_3.w, 3) * (1 + growth_ratio))) &&
+             size(new_n.c1_before_d3.w, 3) == Int64(round(size(old_n.c1_before_d3.w, 3) * (1 + growth_ratio))) &&
+             size(new_n.c1_after_pool.w, 3) == Int64(round(size(old_n.c1_after_pool.w, 3) * (1 + growth_ratio)))
+    ) "New model is not widened correctly"
+
+    # Widening the next inceptionA
+    wider_inceptionA(wider.layers[chosen_layer+1], wider.layers[chosen_layer+2], wider.layers[chosen_layer+4], growth_ratio, 0)
+    # Widening the next inceptionB
+    wider_inceptionB(wider.layers[chosen_layer+2], wider.layers[chosen_layer+4], growth_ratio, 0)
+
+    sames = 0
+    total = 0
+    for (i, (x, y)) in enumerate(dtst)
+        y_olds = y_oldss[i]
+        y_news = wider(x)
+
+        sames += sum(y_olds .- y_news .< 0.01)
+        total += length(y_olds)
+    end
+
+    @assert sames/total == 1 "Function is not preserved"
+    println("wider inceptionA test passed")
+end
+
+"""
+Test for checking if random pad functions for Inception modules pad properly
+"""
+function test_random_pad_inception()
+    (xtrn, ytrn), (xtst, ytst) = load_data()
+
+    dtrn = minibatch(xtrn, ytrn, 50, xtype=atype())
+    dtst = minibatch(xtst, ytst, 50, xtype=atype())
+
+    model = create_inception_bn_sm_model(3, 10)
+
+    results, model = train_results(dtrn, dtst, "inception_sm.jld2", model, 50, false, false)
+    wider = deepcopy(model)
+
+    chosen_layer = 3
+    growth_ratio = 1.25
+
+    old_l = model.layers[chosen_layer]
+    old_n = model.layers[chosen_layer+1]
+
+    new_l = wider.layers[chosen_layer]
+    new_n = wider.layers[chosen_layer+1]
+
+    random_pad_inceptionA(new_l, new_n, growth_ratio)
+
+    @assert (size(new_l.c1_alone.w, 4) == Int64(round(size(old_l.c1_alone.w, 4) * (1 + growth_ratio))) &&
+             size(new_l.c1_alone.b, 3) == Int64(round(size(old_l.c1_alone.b, 3) * (1 + growth_ratio))) &&
+             size(new_l.c3.w, 4) == Int64(round(size(old_l.c3.w, 4) * (1 + growth_ratio))) &&
+             size(new_l.c3.b, 3) == Int64(round(size(old_l.c3.b, 3) * (1 + growth_ratio))) &&
+             size(new_l.cd3_2.w, 4) == Int64(round(size(old_l.cd3_2.w, 4) * (1 + growth_ratio))) &&
+             size(new_l.cd3_2.b, 3) == Int64(round(size(old_l.cd3_2.b, 3) * (1 + growth_ratio))) &&
+             size(new_l.c1_after_pool.w, 4) == Int64(round(size(old_l.c1_after_pool.w, 4) * (1 + growth_ratio))) &&
+             size(new_l.c1_after_pool.b, 3) == Int64(round(size(old_l.c1_after_pool.b, 3) * (1 + growth_ratio))) &&
+
+             size(new_n.c1_alone.w, 3) == Int64(round(size(old_n.c1_alone.w, 3) * (1 + growth_ratio))) &&
+             size(new_n.c1_before_3.w, 3) == Int64(round(size(old_n.c1_before_3.w, 3) * (1 + growth_ratio))) &&
+             size(new_n.c1_before_d3.w, 3) == Int64(round(size(old_n.c1_before_d3.w, 3) * (1 + growth_ratio))) &&
+             size(new_n.c1_after_pool.w, 3) == Int64(round(size(old_n.c1_after_pool.w, 3) * (1 + growth_ratio)))
+    ) "New model is not widened correctly"
+
+    random_pad_inceptionA(wider.layers[chosen_layer+1], wider.layers[chosen_layer+2], wider.layers[chosen_layer+4], growth_ratio)
+    random_pad_inceptionB(wider.layers[chosen_layer+2], wider.layers[chosen_layer+4], growth_ratio)
+    wider(dtst)
+
+    println("random pad inceptionA test passed")
 end

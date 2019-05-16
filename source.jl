@@ -7,8 +7,6 @@ using Knet: Knet, dir, zeroone, progress, sgd, load, save, gc, progress!, Param,
 using AutoGrad
 using Base.Iterators
 using DelimitedFiles
-# using Profile
-# using ProfileView
 
 
 include(Knet.dir("data", "cifar.jl"))
@@ -31,6 +29,24 @@ Trains a model, tests it every epoch on training and testing data.
 Saves results to a file and can load them back. Returns the results.
 """
 function train_results(dtrn, dtst, file, model, epochs=100, from_scratch=true, cont_from_save=false; o...)
+    file = string("saved/", file)
+    if !from_scratch
+        try
+            r, model = Knet.load(file, "results", "model")
+            if cont_from_save
+                new_r = ((model(dtrn), model(dtst), accuracy(model, dtrn), accuracy(model, dtst))
+                     for x in take_every(length(dtrn), progress(adam(model, repeat(dtrn,epochs)))))
+                new_r = reshape(collect(Float32,flatten(new_r)),(4,:))
+                r = hcat(r, new_r)
+                Knet.save(file, "results", r, "model", model)
+                Knet.gc() # To save gpu memory
+            end
+        catch SystemError
+            println("File not found. Running from scratch.")
+            from_scratch = true
+        end
+    end
+
     if from_scratch
         r_first = [model(dtrn), model(dtst), accuracy(model, dtrn), accuracy(model, dtst)]
         r = ((model(dtrn), model(dtst), accuracy(model, dtrn), accuracy(model, dtst))
@@ -39,18 +55,8 @@ function train_results(dtrn, dtst, file, model, epochs=100, from_scratch=true, c
         r = hcat(r_first, r)
         Knet.save(file, "results", r, "model", model)
         Knet.gc() # To save gpu memory
-    else
-        r, model = Knet.load(file, "results", "model")
-        if cont_from_save
-            # todo: continue training may not work for some reason
-            new_r = ((model(dtrn), model(dtst), accuracy(model, dtrn), accuracy(model, dtst))
-                 for x in take_every(length(dtrn), progress(adam(model, repeat(dtrn,epochs)))))
-            new_r = reshape(collect(Float32,flatten(new_r)),(4,:))
-            r = hcat(r, new_r)
-            Knet.save(file, "results", r, "model", model)
-            Knet.gc() # To save gpu memory
-        end
     end
+
     println("Trn/Tst loss: ", minimum(r[1:2, :], dims=2),
             "Trn/Tst acc: ", maximum(r[3:4, :], dims=2))
     return r, model
@@ -79,16 +85,17 @@ sqrt(0.3) using Net2WiderNet and the baseline method random padding.
 """
 function wider_experiment(dtrn, dtst)
     teacher = create_inception_bn_sm_model(3, 10)
-    results, teacher = train_results(dtrn, dtst, "inception_sm.jld2", teacher, 5, false, true)
+    results, teacher = train_results(dtrn, dtst, "inception_sm.jld2", teacher, 5, false)
     println("Teacher results: ", results)
     writedlm("res/wider_res_teacher.txt", results)
 
     growth_ratio = 1.0/sqrt(0.3)
+    noise = 0.03
 
     wider = deepcopy(teacher)
-    wider_inceptionA(wider.layers[3], wider.layers[4], growth_ratio)
-    wider_inceptionA(wider.layers[4], wider.layers[5], wider.layers[7], growth_ratio)
-    wider_inceptionB(wider.layers[5], wider.layers[7], growth_ratio)
+    wider_inceptionA(wider.layers[3], wider.layers[4], growth_ratio, noise)
+    wider_inceptionA(wider.layers[4], wider.layers[5], wider.layers[7], growth_ratio, noise)
+    wider_inceptionB(wider.layers[5], wider.layers[7], growth_ratio, noise)
 
     padded = teacher
     random_pad_inceptionA(padded.layers[3], padded.layers[4], growth_ratio)
@@ -108,7 +115,7 @@ end
 
 """
 Net2DeeperNet experiment
------------------------
+------------------------
 Each Inception module in a smaller Inception network is deepened by 2 layers
 using Net2DeeperNet and the baseline method random initialization.
 """
@@ -138,7 +145,8 @@ end
 Exploring design space experiment
 ---------------------------------
 The design space is explored by using Net2WiderNet with a factor of sqrt(2) and
-Net2DeeperNet with 4 layers per module layer.
+Net2DeeperNet with 4 layers per module layer. An additional student that is both
+wider and deeper is also explored.
 """
 function explore_experiment(dtrn, dtst)
     teacher = create_inception_bn_sm_model(3, 10)
@@ -166,7 +174,7 @@ function explore_experiment(dtrn, dtst)
     println("Deeper results: ", results)
     writedlm("res/explore_res_deeper.txt", results)
 
-    # New try with both widening and deepening
+    # New one with both widening and deepening, but with smaller factors
     bigger = deepcopy(teacher)
     widening_factor = 1/sqrt(0.3)
     wider_inceptionA(bigger.layers[3], bigger.layers[4], widening_factor)
@@ -181,6 +189,12 @@ function explore_experiment(dtrn, dtst)
     writedlm("res/explore_res_bigger.txt", results)
 end
 
+"""
+Added Noise experiment
+----------------------
+Experiment to find out how much noise one should add after Net2WiderNet. Results
+show that Gaussian noise with 0.05 gives good results.
+"""
 function noise_experiment(dtrn, dtst)
     teacher = create_inception_bn_sm_model(3, 10)
     results, teacher = train_results(dtrn, dtst, "inception_sm.jld2", teacher, 5, false)
@@ -188,24 +202,24 @@ function noise_experiment(dtrn, dtst)
     growth_ratio = 1.0/sqrt(0.3)
 
     wider_no_noise = deepcopy(teacher)
-    wider_inceptionA(wider_no_noise.layers[3], wider_no_noise.layers[4], growth_ratio, false)
-    wider_inceptionA(wider_no_noise.layers[4], wider_no_noise.layers[5], wider_no_noise.layers[7], growth_ratio, false)
-    wider_inceptionB(wider_no_noise.layers[5], wider_no_noise.layers[7], growth_ratio, false)
+    wider_inceptionA(wider_no_noise.layers[3], wider_no_noise.layers[4], growth_ratio, 0)
+    wider_inceptionA(wider_no_noise.layers[4], wider_no_noise.layers[5], wider_no_noise.layers[7], growth_ratio, 0)
+    wider_inceptionB(wider_no_noise.layers[5], wider_no_noise.layers[7], growth_ratio, 0)
 
     wider_noise_1 = deepcopy(teacher)
-    wider_inceptionA(wider_noise_1.layers[3], wider_noise_1.layers[4], growth_ratio, true, 0.01)
-    wider_inceptionA(wider_noise_1.layers[4], wider_noise_1.layers[5], wider_noise_1.layers[7], growth_ratio, true, 0.01)
-    wider_inceptionB(wider_noise_1.layers[5], wider_noise_1.layers[7], growth_ratio, true, 0.01)
+    wider_inceptionA(wider_noise_1.layers[3], wider_noise_1.layers[4], growth_ratio, 0.01)
+    wider_inceptionA(wider_noise_1.layers[4], wider_noise_1.layers[5], wider_noise_1.layers[7], growth_ratio, 0.01)
+    wider_inceptionB(wider_noise_1.layers[5], wider_noise_1.layers[7], growth_ratio, 0.01)
 
     wider_noise_2 = deepcopy(teacher)
-    wider_inceptionA(wider_noise_2.layers[3], wider_noise_2.layers[4], growth_ratio, true, 0.05)
-    wider_inceptionA(wider_noise_2.layers[4], wider_noise_2.layers[5], wider_noise_2.layers[7], growth_ratio, true, 0.05)
-    wider_inceptionB(wider_noise_2.layers[5], wider_noise_2.layers[7], growth_ratio, true, 0.05)
+    wider_inceptionA(wider_noise_2.layers[3], wider_noise_2.layers[4], growth_ratio, 0.05)
+    wider_inceptionA(wider_noise_2.layers[4], wider_noise_2.layers[5], wider_noise_2.layers[7], growth_ratio, 0.05)
+    wider_inceptionB(wider_noise_2.layers[5], wider_noise_2.layers[7], growth_ratio, 0.05)
 
     wider_noise_3 = deepcopy(teacher)
-    wider_inceptionA(wider_noise_3.layers[3], wider_noise_3.layers[4], growth_ratio, true, 0.1)
-    wider_inceptionA(wider_noise_3.layers[4], wider_noise_3.layers[5], wider_noise_3.layers[7], growth_ratio, true, 0.1)
-    wider_inceptionB(wider_noise_3.layers[5], wider_noise_3.layers[7], growth_ratio, true, 0.1)
+    wider_inceptionA(wider_noise_3.layers[3], wider_noise_3.layers[4], growth_ratio, 0.1)
+    wider_inceptionA(wider_noise_3.layers[4], wider_noise_3.layers[5], wider_noise_3.layers[7], growth_ratio, 0.1)
+    wider_inceptionB(wider_noise_3.layers[5], wider_noise_3.layers[7], growth_ratio, 0.1)
 
 
     results, wider = train_results(dtrn, dtst, "inception_sm_exp_wider_no_noise.jld2", wider_no_noise, 5, true)
@@ -235,13 +249,12 @@ end
 
 function perform_tests()
     test_wider_mlp()
-    test_wider_conv()
-    test_wider_inception()
-    test_random_pad_inception()
-    test_deeper_conv()
-    test_deeper_inception()
+    # test_wider_conv()
+    # test_wider_inception()
+    # test_random_pad_inception()
+    # test_deeper_conv()
+    # test_deeper_inception()
 end
 
-Knet.gc()
-main()
-# perform_tests()
+# main()
+perform_tests()

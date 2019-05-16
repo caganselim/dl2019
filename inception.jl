@@ -190,36 +190,6 @@ function create_inception_bn_model(num_channels::Int, num_classes::Int)
 end
 
 """
-Builds an Inception-BN network model modified to take 32x32 images.
-This network is too complex for the problem and requires too many resources to train.
-In the experiments, the smaller version below is used.
-"""
-function create_inception_bn_cifar_model(num_channels::Int, num_classes::Int)
-    Chain(
-        ConvBN(3, 3, num_channels, 64),
-
-        ConvBN(1, 1, 64, 64),
-        ConvBN(3, 3, 64, 192),
-
-        InceptionA(192, 64, 64, 64, 64, 96, 32, 2),
-        InceptionA(256, 64, 64, 96, 64, 96, 64, 2),
-        InceptionB(320, 128, 160, 64, 96),
-
-        InceptionA(576, 224, 64, 96, 96, 128, 128, 2),
-        InceptionA(576, 192, 96, 128, 96, 128, 128, 2),
-        InceptionA(576, 160, 128, 160, 128, 160, 128, 2),
-        InceptionA(608, 96, 128, 192, 160, 192, 128, 2),
-        InceptionB(608, 128, 192, 192, 256),
-
-        InceptionA(1056, 352, 192, 320, 160, 224, 128, 2),
-        InceptionA(1024, 352, 192, 320, 192, 224, 128, 0),
-        Pool(7, 1, 0, 2),
-        Flatten(1024),
-        Linear(1024, num_classes)
-    )
-end
-
-"""
 Builds a smaller version of Inception-BN network model modified to take 32x32 images.
 This is the version used in the experiments.
 """

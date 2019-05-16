@@ -2,6 +2,7 @@
 
 """
 Initializes an identity convolutional filter of the given size.
+Useful for Net2DeeperNet.
 """
 function id_filter(w1, w2, cx, cy)
     w = zeros(w1, w2, cx, cy)
@@ -16,10 +17,17 @@ function id_filter(w1, w2, cx, cy)
 end
 
 """
-Net2WiderDeeperNet method for Convs.
+    deeper_conv(layers, layer_index, dtrn=nothing)
+
+Net2WiderDeeperNet method for Conv layers.
 Creates a new convolutional layer with identity filters that fit with the previous layer.
 Function is preserved during the deepening.
 If layer uses batchnorm, training minibatches are needed for initialization.
+
+`layers` should be the array of layers of your network
+`layer_index` should be the index of the layer that you want to use for deepening
+If the layer is of type ConvBN, `dtrn` should be the training minibatches that your network was trained with.
+If batch normalization is not used, `dtrn` can be left as `nothing`
 """
 function deeper_conv(layers, layer_index, dtrn=nothing)
     prev_layer = layers[layer_index]
@@ -64,9 +72,19 @@ function deeper_conv(layers, layer_index, dtrn=nothing)
 end
 
 """
+    deeper_inception(layers, layer_index, dtrn, deepening_factor=2)
+
 Net2WiderDeeperNet method for Inception modules.
-Creates new convolutional layers to deepen the module.
+Works with both InceptionA and InceptionB.
+Creates new conv layers for each conv that is not 1x1 in the module.
+Given deepening factor determines how many layers per layer are created.
 Function is preserved during the deepening.
+
+`layers` should be the array of layers of your network
+`layer_index` should be the index of the layer that you want to use for deepening
+The layer at 'layer_index' can be of type `InceptionA` or `InceptionB`
+`dtrn` should be the training minibatches that your network was trained with.
+`deepening_factor` determines the amount of deepening
 """
 function deeper_inception(layers, layer_index, dtrn, deepening_factor=2)
     inc_layer = layers[layer_index]
@@ -126,8 +144,12 @@ function deeper_inception(layers, layer_index, dtrn, deepening_factor=2)
     end
 end
 
+#-------------------------------------------------------------------------------
+# ---------------------------- TESTS BEGIN -------------------------------------
+#-------------------------------------------------------------------------------
+
 """
-Tests Net2DeeperNet for convolutions
+Test for checking if deeper functions for Conv layers deepen properly and are function preserving
 """
 function test_deeper_conv(with_bn=true)
     (xtrn, ytrn), (xtst, ytst) = load_data()
@@ -177,7 +199,7 @@ function test_deeper_conv(with_bn=true)
 end
 
 """
-Tests Net2DeeperNet for Inception modules
+Test for checking if deeper functions for Inception modules deepen properly and are function preserving
 """
 function test_deeper_inception()
     (xtrn, ytrn), (xtst, ytst) = load_data()
