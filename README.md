@@ -4,6 +4,8 @@ This is the repo for my 2019 Deep Learning term project. This project consists o
 
 Net2Net is a set of methods for growing a wider and/or deeper 'student' network from a trained 'teacher' network while preserving its function. The student network performs immediately as well as the teacher while possessing greater capacity that can be utilized by further training. Training a Net2Net initialized network is shown to converge faster than training from scratch.
 
+While the original paper ran experiments using the Inception-BN network on the ImageNet dataset, this work uses a modified, smaller version of the network on the CIFAR-10 dataset. However, the original Inception-BN architecture is available in `inception.jl`, and can be used for experiments.
+
 Check the following links for additional information:
 
 - [Technical Report](https://www.overleaf.com/read/wxvptvtnrsdn)
