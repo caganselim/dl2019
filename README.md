@@ -12,5 +12,10 @@ Check the following links for additional information:
 - [Research log](https://docs.google.com/spreadsheets/d/1mkuw2OMh9RdHeVrFEJfgqll0yJfqjLKJ9WGNHuO8nMg/edit?usp=sharing)
 - [Original paper](https://arxiv.org/abs/1511.05641)
 
-# Usage
+## Usage
 
+To run the tests and experiments, simply run `source.jl`.
+
+To use the Net2WiderNet or Net2DeeperNet operations, call the `wider_*` and `deeper_*` functions defined in `wider.jl` and `deeper.jl`. Refer to the docstrings for the usage of those functions.
+
+`models.jl` and `inception.jl` files define strucures and functions for building models that can be used with the Net2WiderNet and Net2DeeperNet functions.
